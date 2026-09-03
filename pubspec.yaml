@@ -61,6 +61,8 @@ flutter:
   assets:
     - assets/icon/Icon.png
     - assets/terms/terms.md
+    - assets/icon/learn_icon.png
+    - assets/icon/practice_icon.png
 
 flutter_native_splash:
   color: "#ffffff"
