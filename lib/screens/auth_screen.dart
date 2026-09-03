@@ -23,6 +23,7 @@ class _AuthScreenState extends State<AuthScreen> {
   String? _emailError;
   bool _obscurePassword = true;
   bool _obscureConfirmPassword = true;
+  int _failedLoginAttempts = 0;
 
   @override
   void dispose() {
@@ -129,6 +130,7 @@ Future<void> _submit() async {
       
       // Improve error messages for login
       if (_isLogin) {
+        setState(() => _failedLoginAttempts++);
         if (msg.contains('Invalid email or password') || 
             msg.contains('user-not-found') || 
             msg.contains('wrong-password') ||
@@ -336,7 +338,7 @@ Future<void> _submit() async {
                               : 'Already have an account? Log in',
                         ),
                       ),
-                      if (_isLogin)
+                      if (_isLogin && _failedLoginAttempts >= 3)
                         TextButton(
                           onPressed: () {
                             Navigator.pushNamed(context, '/reset-password');
