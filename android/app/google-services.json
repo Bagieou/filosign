@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "725184092543",
+    "project_id": "filosign-8bf18",
+    "storage_bucket": "filosign-8bf18.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:725184092543:android:74a3b752f3920d6718e24a",
+        "android_client_info": {
+          "package_name": "com.example.filosign"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyBbY7Cn9LZvHwY0J68DU6WuS2cQZynsfwM"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}

@@ -1,9 +1,45 @@
 import 'package:flutter/material.dart';
+import 'package:shared_preferences/shared_preferences.dart';
+import '../services/auth_service.dart';
 
-class HomeScreen extends StatelessWidget {
-  const HomeScreen({super.key, required this.email});
+class HomeScreen extends StatefulWidget {
+  const HomeScreen({super.key});
 
-  final String email;
+  @override
+  State<HomeScreen> createState() => _HomeScreenState();
+}
+
+class _HomeScreenState extends State<HomeScreen> {
+  String _welcomeMessage = '';
+  bool _showWelcome = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _loadUserData();
+  }
+
+  Future<void> _loadUserData() async {
+    final prefs = await SharedPreferences.getInstance();
+    final welcomeType = prefs.getString('welcome_type');
+
+    if (welcomeType != null) {
+      await prefs.remove('welcome_type');
+    }
+
+    final shouldShowWelcome = welcomeType != null;
+    setState(() {
+      _welcomeMessage = welcomeType == 'signup' ? 'Welcome to FiloSign' : 'Welcome back';
+      _showWelcome = shouldShowWelcome;
+    });
+
+    if (_showWelcome) {
+      await Future.delayed(const Duration(seconds: 3));
+      if (mounted) {
+        setState(() => _showWelcome = false);
+      }
+    }
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -13,9 +49,7 @@ class HomeScreen extends StatelessWidget {
         automaticallyImplyLeading: true,
         actions: [
           IconButton(
-            onPressed: () {
-              Navigator.of(context).pushReplacementNamed('/auth');
-            },
+            onPressed: () => AuthService().signOut(),
             icon: const Icon(Icons.logout),
           ),
         ],
@@ -39,18 +73,27 @@ class HomeScreen extends StatelessWidget {
                 ),
               ),
               const SizedBox(height: 16),
-              Text(
-                'Welcome back, $email',
-                style: Theme.of(context).textTheme.headlineSmall?.copyWith(
-                  fontWeight: FontWeight.bold,
+              if (_showWelcome)
+                Column(
+                  children: [
+                    Padding(
+                      padding: const EdgeInsets.only(bottom: 8),
+                      child: Text(
+                        _welcomeMessage,
+                        style: Theme.of(context).textTheme.headlineSmall?.copyWith(
+                              fontWeight: FontWeight.bold,
+                              color: const Color(0xFF0F766E),
+                            ),
+                        textAlign: TextAlign.center,
+                      ),
+                    ),
+                    const SizedBox(height: 8),
+                    const Text(
+                      'Start learning Filipino Sign Language through simple lessons and practice.',
+                      textAlign: TextAlign.center,
+                    ),
+                  ],
                 ),
-                textAlign: TextAlign.center,
-              ),
-              const SizedBox(height: 8),
-              const Text(
-                'Start learning Filipino Sign Language through simple lessons and practice.',
-                textAlign: TextAlign.center,
-              ),
             ],
           ),
         ),

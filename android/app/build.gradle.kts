@@ -1,5 +1,8 @@
 plugins {
     id("com.android.application")
+    // START: FlutterFire Configuration
+    id("com.google.gms.google-services")
+    // END: FlutterFire Configuration
     // The Flutter Gradle Plugin must be applied after the Android and Kotlin Gradle plugins.
     id("dev.flutter.flutter-gradle-plugin")
 }
@@ -10,8 +13,8 @@ android {
     ndkVersion = flutter.ndkVersion
 
     compileOptions {
-        sourceCompatibility = JavaVersion.VERSION_17
-        targetCompatibility = JavaVersion.VERSION_17
+        sourceCompatibility = JavaVersion.VERSION_21
+        targetCompatibility = JavaVersion.VERSION_21
     }
 
     defaultConfig {
@@ -34,12 +37,25 @@ android {
     }
 }
 
-kotlin {
-    compilerOptions {
-        jvmTarget = org.jetbrains.kotlin.gradle.dsl.JvmTarget.JVM_17
-    }
+dependencies {
+    implementation("com.google.firebase:firebase-auth")
+    implementation("com.google.firebase:firebase-analytics")
 }
 
 flutter {
     source = "../.."
+}
+
+tasks.register("copyFlutterApk", Copy::class) {
+    group = "flutter"
+    description = "Copy APK to Flutter expected location"
+    from(layout.buildDirectory.dir("outputs/flutter-apk"))
+    into(layout.projectDirectory.dir("../../build/app/outputs/flutter-apk"))
+    include("*.apk")
+}
+
+afterEvaluate {
+    tasks.named("assembleDebug") {
+        finalizedBy("copyFlutterApk")
+    }
 }

@@ -1,6 +1,8 @@
 import 'package:flutter/material.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 import '../services/auth_service.dart';
-import 'home_screen.dart';
+import '../services/terms_loader.dart';
+import '../widgets/terms_dialog.dart';
 
 class AuthScreen extends StatefulWidget {
   const AuthScreen({super.key});
@@ -13,19 +15,72 @@ class _AuthScreenState extends State<AuthScreen> {
   final _formKey = GlobalKey<FormState>();
   final _emailController = TextEditingController();
   final _passwordController = TextEditingController();
+  final _confirmPasswordController = TextEditingController();
   final _authService = AuthService();
   bool _isLogin = true;
   bool _isLoading = false;
   String? _message;
+  String? _emailError;
+  bool _obscurePassword = true;
+  bool _obscureConfirmPassword = true;
 
   @override
   void dispose() {
     _emailController.dispose();
     _passwordController.dispose();
+    _confirmPasswordController.dispose();
     super.dispose();
   }
 
-  Future<void> _submit() async {
+  String? _validateEmail(String? value) {
+    if (value == null || value.trim().isEmpty) {
+      return 'Enter your email';
+    }
+    final emailRegex = RegExp(r'^[\w-\.]+@([\w-]+\.)+[\w-]{2,}$');
+    if (!emailRegex.hasMatch(value.trim())) {
+      return 'Enter a valid email address';
+    }
+    return null;
+  }
+
+  void _onEmailChanged(String value) {
+    setState(() {
+      _emailError = _validateEmail(value);
+    });
+  }
+
+  String? _validatePassword(String? value) {
+    if (value == null || value.isEmpty) {
+      return 'Enter your password';
+    }
+    if (value.length < 8) {
+      return 'Password must be at least 8 characters';
+    }
+    if (!value.contains(RegExp(r'[A-Z]'))) {
+      return 'Password must contain an uppercase letter';
+    }
+    if (!value.contains(RegExp(r'[0-9]'))) {
+      return 'Password must contain a number';
+    }
+    if (!value.contains(RegExp(r'[!@#\$%^&*(),.?":{}\[\]]'))) {
+      return 'Password must contain a special character';
+    }
+    return null;
+  }
+
+  String? _validateConfirmPassword(String? value) {
+    if (!_isLogin) {
+      if (value == null || value.isEmpty) {
+        return 'Confirm your password';
+      }
+      if (value != _passwordController.text) {
+        return 'Passwords do not match';
+      }
+    }
+    return null;
+  }
+
+Future<void> _submit() async {
     if (!_formKey.currentState!.validate()) {
       return;
     }
@@ -38,29 +93,64 @@ class _AuthScreenState extends State<AuthScreen> {
     try {
       final email = _emailController.text.trim();
       final password = _passwordController.text;
-      final user = _isLogin
-          ? await _authService.signIn(email, password)
-          : await _authService.signUp(email, password);
-
-      if (!mounted) return;
-
-      if (user != null) {
-        if (!mounted) return;
-        setState(() {
-          _message = _isLogin
-              ? 'Login successful.'
-              : 'Account created successfully.';
-        });
-        Navigator.of(context).pushReplacement(
-          MaterialPageRoute(builder: (_) => HomeScreen(email: user.email)),
-        );
+      final isLogin = _isLogin; // capture button pressed
+      if (isLogin) {
+        await _authService.signIn(email: email, password: password);
+        final prefs = await SharedPreferences.getInstance();
+        await prefs.setString('welcome_type', 'login');
       } else {
-        setState(() {
-          _message = _isLogin
-              ? 'Invalid email or password.'
-              : 'That email is already registered.';
-        });
+        // Load terms and show dialog
+        final terms = await TermsLoader.load();
+        final ctx = context; // capture context for async gap
+        // ignore: use_build_context_synchronously
+        final agreed = await showDialog<bool>(
+          // ignore: use_build_context_synchronously
+          context: ctx,
+          barrierDismissible: false,
+          builder: (_) => TermsDialog(termsText: terms),
+        );
+        if (!mounted) return;
+
+        if (agreed != true) {
+          setState(() {
+            _isLoading = false;
+            _message = 'You must accept the terms to create an account.';
+          });
+          return;
+        }
+
+        final prefs = await SharedPreferences.getInstance();
+        await prefs.setString('welcome_type', 'signup');
+        await _authService.signUpVerified(email: email, password: password);
       }
+    } on Exception catch (e) {
+      if (!mounted) return;
+      String msg = e.toString().replaceFirst('Exception: ', '');
+      
+      // Improve error messages for login
+      if (_isLogin) {
+        if (msg.contains('Invalid email or password') || 
+            msg.contains('user-not-found') || 
+            msg.contains('wrong-password') ||
+            msg.contains('invalid-credential')) {
+          msg = 'Invalid email or password. Please check your credentials.';
+        } else if (msg.contains('user-disabled')) {
+          msg = 'This account has been disabled. Please contact support.';
+        } else if (msg.contains('too-many-requests')) {
+          msg = 'Too many failed attempts. Please try again later.';
+        }
+      } else {
+        // Sign up errors
+        if (msg.contains('already exists') || msg.contains('email-already-in-use')) {
+          msg = 'An account already exists for this email. Please log in instead.';
+        } else if (msg.contains('weak-password')) {
+          msg = 'Password is too weak. Please use a stronger password.';
+        } else if (msg.contains('invalid-email')) {
+          msg = 'Please enter a valid email address.';
+        }
+      }
+      
+      setState(() => _message = msg);
     } finally {
       if (mounted) {
         setState(() => _isLoading = false);
@@ -81,7 +171,12 @@ class _AuthScreenState extends State<AuthScreen> {
         ),
         child: Center(
           child: SingleChildScrollView(
-            padding: const EdgeInsets.all(24),
+            padding: EdgeInsets.only(
+              left: 24,
+              right: 24,
+              top: 24,
+              bottom: 24 + MediaQuery.of(context).viewInsets.bottom,
+            ),
             child: Card(
               elevation: 6,
               shape: RoundedRectangleBorder(
@@ -91,8 +186,9 @@ class _AuthScreenState extends State<AuthScreen> {
                 padding: const EdgeInsets.all(24),
                 child: Form(
                   key: _formKey,
-                  child: Column(
-                    mainAxisSize: MainAxisSize.min,
+                  child: ListView(
+                    shrinkWrap: true,
+                    physics: const NeverScrollableScrollPhysics(),
                     children: [
                       const Icon(
                         Icons.sign_language,
@@ -102,6 +198,7 @@ class _AuthScreenState extends State<AuthScreen> {
                       const SizedBox(height: 12),
                       Text(
                         'FiloSign',
+                        textAlign: TextAlign.center,
                         style: Theme.of(context).textTheme.headlineSmall
                             ?.copyWith(fontWeight: FontWeight.bold),
                       ),
@@ -121,40 +218,70 @@ class _AuthScreenState extends State<AuthScreen> {
                         controller: _emailController,
                         keyboardType: TextInputType.emailAddress,
                         textInputAction: TextInputAction.next,
-                        decoration: const InputDecoration(
+                        onChanged: _onEmailChanged,
+                        decoration: InputDecoration(
                           labelText: 'Email',
-                          border: OutlineInputBorder(),
+                          border: const OutlineInputBorder(),
+                          errorText: _emailError,
                         ),
-                        validator: (value) {
-                          if (value == null || value.trim().isEmpty) {
-                            return 'Enter your email';
-                          }
-                          if (!value.contains('@')) {
-                            return 'Enter a valid email';
-                          }
-                          return null;
-                        },
+                        validator: (value) => _validateEmail(value),
                       ),
                       const SizedBox(height: 12),
                       TextFormField(
                         controller: _passwordController,
-                        obscureText: true,
-                        textInputAction: TextInputAction.done,
+                        obscureText: _obscurePassword,
+                        textInputAction: _isLogin ? TextInputAction.done : TextInputAction.next,
                         onFieldSubmitted: (_) => _submit(),
-                        decoration: const InputDecoration(
+                        onChanged: (_) => setState(() {}),
+                        decoration: InputDecoration(
                           labelText: 'Password',
-                          border: OutlineInputBorder(),
+                          border: const OutlineInputBorder(),
+                          suffixIcon: IconButton(
+                            icon: Icon(
+                              _obscurePassword ? Icons.visibility_off : Icons.visibility,
+                            ),
+                            onPressed: () {
+                              setState(() {
+                                _obscurePassword = !_obscurePassword;
+                              });
+                            },
+                          ),
                         ),
-                        validator: (value) {
-                          if (value == null || value.isEmpty) {
-                            return 'Enter your password';
-                          }
-                          if (value.length < 6) {
-                            return 'Password must be at least 6 characters';
-                          }
-                          return null;
-                        },
+                        validator: _isLogin
+                            ? (value) {
+                                if (value == null || value.isEmpty) {
+                                  return 'Enter your password';
+                                }
+                                return null;
+                              }
+                            : _validatePassword,
                       ),
+                      if (!_isLogin) ...[
+                        const SizedBox(height: 8),
+                        _PasswordRequirements(password: _passwordController.text),
+                        const SizedBox(height: 12),
+                        TextFormField(
+                          controller: _confirmPasswordController,
+                          obscureText: _obscureConfirmPassword,
+                          textInputAction: TextInputAction.done,
+                          onFieldSubmitted: (_) => _submit(),
+                          decoration: InputDecoration(
+                            labelText: 'Confirm Password',
+                            border: const OutlineInputBorder(),
+                            suffixIcon: IconButton(
+                              icon: Icon(
+                                _obscureConfirmPassword ? Icons.visibility_off : Icons.visibility,
+                              ),
+                              onPressed: () {
+                                setState(() {
+                                  _obscureConfirmPassword = !_obscureConfirmPassword;
+                                });
+                              },
+                            ),
+                          ),
+                          validator: _validateConfirmPassword,
+                        ),
+                      ],
                       const SizedBox(height: 16),
                       if (_message != null)
                         Padding(
@@ -209,6 +336,13 @@ class _AuthScreenState extends State<AuthScreen> {
                               : 'Already have an account? Log in',
                         ),
                       ),
+                      if (_isLogin)
+                        TextButton(
+                          onPressed: () {
+                            Navigator.pushNamed(context, '/reset-password');
+                          },
+                          child: const Text('Forgot password?'),
+                        ),
                     ],
                   ),
                 ),
@@ -219,4 +353,61 @@ class _AuthScreenState extends State<AuthScreen> {
       ),
     );
   }
+} 
+
+class _PasswordRequirements extends StatelessWidget {
+  final String password;
+  const _PasswordRequirements({required this.password});
+
+  @override
+  Widget build(BuildContext context) {
+    final requirements = [
+      _Requirement(
+        label: 'At least 8 characters',
+        met: password.length >= 8,
+      ),
+      _Requirement(
+        label: 'One uppercase letter',
+        met: password.contains(RegExp(r'[A-Z]')),
+      ),
+      _Requirement(
+        label: 'One number',
+        met: password.contains(RegExp(r'[0-9]')),
+      ),
+      _Requirement(
+        label: 'One special character',
+        met: password.contains(RegExp(r'[!@#\$%^&*(),.?":{}[]')),
+      ),
+    ];
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: requirements.map((req) => Padding(
+        padding: const EdgeInsets.symmetric(vertical: 2),
+        child: Row(
+          children: [
+            Icon(
+              req.met ? Icons.check_circle : Icons.cancel,
+              size: 18,
+              color: req.met ? Colors.green : Colors.red,
+            ),
+            const SizedBox(width: 8),
+            Text(
+              req.label,
+              style: TextStyle(
+                color: req.met ? Colors.green.shade700 : Colors.red.shade700,
+                fontSize: 13,
+              ),
+            ),
+          ],
+        ),
+      )).toList(),
+    );
+  }
 }
+
+class _Requirement {
+  final String label;
+  final bool met;
+  _Requirement({required this.label, required this.met});
+} 
