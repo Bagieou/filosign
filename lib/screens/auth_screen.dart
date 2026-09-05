@@ -2,6 +2,8 @@ import 'package:flutter/material.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import '../services/auth_service.dart';
 import '../services/terms_loader.dart';
+import '../utils/validators.dart';
+import '../widgets/password_requirements.dart';
 import '../widgets/terms_dialog.dart';
 
 class AuthScreen extends StatefulWidget {
@@ -50,24 +52,7 @@ class _AuthScreenState extends State<AuthScreen> {
     });
   }
 
-  String? _validatePassword(String? value) {
-    if (value == null || value.isEmpty) {
-      return 'Enter your password';
-    }
-    if (value.length < 8) {
-      return 'Password must be at least 8 characters';
-    }
-    if (!value.contains(RegExp(r'[A-Z]'))) {
-      return 'Password must contain an uppercase letter';
-    }
-    if (!value.contains(RegExp(r'[0-9]'))) {
-      return 'Password must contain a number';
-    }
-    if (!value.contains(RegExp(r'[!@#\$%^&*(),.?":{}\[\]]'))) {
-      return 'Password must contain a special character';
-    }
-    return null;
-  }
+  
 
   String? _validateConfirmPassword(String? value) {
     if (!_isLogin) {
@@ -256,11 +241,11 @@ Future<void> _submit() async {
                                 }
                                 return null;
                               }
-                            : _validatePassword,
+                            : validatePassword,
                       ),
                       if (!_isLogin) ...[
                         const SizedBox(height: 8),
-                        _PasswordRequirements(password: _passwordController.text),
+                        PasswordRequirements(password: _passwordController.text),
                         const SizedBox(height: 12),
                         TextFormField(
                           controller: _confirmPasswordController,
@@ -355,61 +340,4 @@ Future<void> _submit() async {
       ),
     );
   }
-} 
-
-class _PasswordRequirements extends StatelessWidget {
-  final String password;
-  const _PasswordRequirements({required this.password});
-
-  @override
-  Widget build(BuildContext context) {
-    final requirements = [
-      _Requirement(
-        label: 'At least 8 characters',
-        met: password.length >= 8,
-      ),
-      _Requirement(
-        label: 'One uppercase letter',
-        met: password.contains(RegExp(r'[A-Z]')),
-      ),
-      _Requirement(
-        label: 'One number',
-        met: password.contains(RegExp(r'[0-9]')),
-      ),
-      _Requirement(
-        label: 'One special character',
-        met: password.contains(RegExp(r'[!@#\$%^&*(),.?":{}[]')),
-      ),
-    ];
-
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: requirements.map((req) => Padding(
-        padding: const EdgeInsets.symmetric(vertical: 2),
-        child: Row(
-          children: [
-            Icon(
-              req.met ? Icons.check_circle : Icons.cancel,
-              size: 18,
-              color: req.met ? Colors.green : Colors.red,
-            ),
-            const SizedBox(width: 8),
-            Text(
-              req.label,
-              style: TextStyle(
-                color: req.met ? Colors.green.shade700 : Colors.red.shade700,
-                fontSize: 13,
-              ),
-            ),
-          ],
-        ),
-      )).toList(),
-    );
-  }
 }
-
-class _Requirement {
-  final String label;
-  final bool met;
-  _Requirement({required this.label, required this.met});
-} 
