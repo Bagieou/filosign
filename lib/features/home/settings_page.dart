@@ -45,7 +45,8 @@ class _SettingsPageState extends State<SettingsPage> {
             Icons.help_outline_rounded,
             'Help and feedback',
             'Get support or share feedback',
-            trailing: const Icon(
+            trailing: const Icon(git remote set-url origin https://github.com
+
               Icons.chevron_right_rounded,
               color: Color(0xFF6B8581),
             ),
