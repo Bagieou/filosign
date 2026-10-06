@@ -1,5 +1,7 @@
+import 'package:filosign/features/home/practice_screen.dart';
 import 'package:flutter/material.dart';
 
+import 'package:supabase_flutter/supabase_flutter.dart';
 import 'video_lesson_page.dart';
 import 'profile_page.dart';
 import 'settings_page.dart';
@@ -25,7 +27,8 @@ class _HomePageState extends State<HomePage> {
 
   @override
   Widget build(BuildContext context) {
-    final pages = [_buildDashboard(), const ProfilePage(), const SettingsPage()];
+    final username = Supabase.instance.client.auth.currentUser?.userMetadata?['full_name'] as String?;
+    final pages = [_buildDashboard(), ProfilePage(username: username), SettingsPage()];
 
     return Scaffold(
       backgroundColor: const Color(0xFFF6FBFA),
@@ -142,7 +145,10 @@ class _HomePageState extends State<HomePage> {
                   title: 'Practice',
                   subtitle: 'Test your skills',
                   color: const Color(0xFFE8782F),
-                  onTap: () => _showComingSoon('Practice'),
+                   onTap: () => Navigator.push(
+                    context,
+                    MaterialPageRoute(builder: (_) => const PracticeScreen()),
+                  ),
                 ),
               ),
             ],
@@ -345,11 +351,5 @@ class _HomePageState extends State<HomePage> {
       ),
     );
 }
- 
-  void _showComingSoon(String feature) {
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(content: Text('$feature is ready for your next lesson.')),
-    );
-  }
  
 }

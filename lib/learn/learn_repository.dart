@@ -43,17 +43,13 @@ class LearnRepository {
       'icon': Icons.waving_hand_outlined,
       'total': 10,
     },
-    'survival': {
-      'title': 'Survival',
-      'icon': Icons.emergency_outlined,
-      'total': 10,
-    },
+    
     'numbers': {
       'title': 'Numbers',
       'icon': Icons.numbers_outlined,
       'total': 10,
     },
-    'calendar': {
+    'months': {
       'title': 'Months',
       'icon': Icons.date_range_outlined,
       'total': 12,
@@ -66,13 +62,9 @@ class LearnRepository {
     'family': {
       'title': 'Family',
       'icon': Icons.family_restroom_outlined,
-      'total': 10,
+      'total': 15,
     },
-    'relationships': {
-      'title': 'Relationships',
-      'icon': Icons.people_outline,
-      'total': 10,
-    },
+    
     'colors': {
       'title': 'Colors',
       'icon': Icons.palette_outlined,
@@ -86,6 +78,16 @@ class LearnRepository {
     'drinks': {
       'title': 'Drinks',
       'icon': Icons.local_drink_outlined,
+      'total': 10,
+    },
+    'basic': {
+      'title': 'Basics',
+      'icon': Icons.people_outline,
+      'total': 5,
+    },
+    'communication': {
+      'title': 'Communication',
+      'icon': Icons.chat_outlined,
       'total': 10,
     },
   };

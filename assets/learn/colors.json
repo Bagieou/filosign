@@ -1,15 +1,15 @@
 [
-  {"id":"colors_blue","title":"BLUE","videoAsset":"videos/colors/blue.mp4","order":0},
-  {"id":"colors_green","title":"GREEN","videoAsset":"videos/colors/green.mp4","order":1},
-  {"id":"colors_red","title":"RED","videoAsset":"videos/colors/red.mp4","order":2},
-  {"id":"colors_brown","title":"BROWN","videoAsset":"videos/colors/brown.mp4","order":3},
-  {"id":"colors_black","title":"BLACK","videoAsset":"videos/colors/black.mp4","order":4},
-  {"id":"colors_white","title":"WHITE","videoAsset":"videos/colors/white.mp4","order":5},
-  {"id":"colors_yellow","title":"YELLOW","videoAsset":"videos/colors/yellow.mp4","order":6},
-  {"id":"colors_orange","title":"ORANGE","videoAsset":"videos/colors/orange.mp4","order":7},
-  {"id":"colors_gray","title":"GRAY","videoAsset":"videos/colors/gray.mp4","order":8},
-  {"id":"colors_pink","title":"PINK","videoAsset":"videos/colors/pink.mp4","order":9},
-  {"id":"colors_violet","title":"VIOLET","videoAsset":"videos/colors/violet.mp4","order":10},
-  {"id":"colors_light","title":"LIGHT","videoAsset":"videos/colors/light.mp4","order":11},
-  {"id":"colors_dark","title":"DARK","videoAsset":"videos/colors/dark.mp4","order":12}
+{"id": "colors_blue", "title": "Blue", "videoAsset": "assets/videos/colors/72.mp4", "order": 0}, 
+{"id": "colors_green", "title": "Green", "videoAsset": "assets/videos/colors/73.mp4", "order": 1}, 
+{"id": "colors_red", "title": "Red", "videoAsset": "assets/videos/colors/74.mp4", "order": 2}, 
+{"id": "colors_brown", "title": "Brown", "videoAsset": "assets/videos/colors/75.mp4", "order": 3}, 
+{"id": "colors_black", "title": "Black", "videoAsset": "assets/videos/colors/76.mp4", "order": 4}, 
+{"id": "colors_white", "title": "White", "videoAsset": "assets/videos/colors/77.mp4", "order": 5}, 
+{"id": "colors_yellow", "title": "Yellow", "videoAsset": "assets/videos/colors/78.mp4", "order": 6}, 
+{"id": "colors_orange", "title": "Orange", "videoAsset": "assets/videos/colors/79.mp4", "order": 7}, 
+{"id": "colors_gray", "title": "Gray", "videoAsset": "assets/videos/colors/80.mp4", "order": 8}, 
+{"id": "colors_pink", "title": "Pink", "videoAsset": "assets/videos/colors/81.mp4", "order": 9}, 
+{"id": "colors_violet", "title": "Violet", "videoAsset": "assets/videos/colors/82.mp4", "order": 10}, 
+{"id": "colors_light", "title": "Light", "videoAsset": "assets/videos/colors/83.mp4", "order": 11}, 
+{"id": "colors_dark", "title": "Dark", "videoAsset": "assets/videos/colors/84.mp4", "order": 12}
 ]

@@ -1,9 +1,10 @@
 import 'dart:async';
 
-import 'package:firebase_auth/firebase_auth.dart';
+import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:flutter/material.dart';
 
 import '../auth/auth_page.dart';
+import '../auth/otp_verification_screen.dart';
 
 class SettingsPage extends StatefulWidget {
   const SettingsPage({super.key});
@@ -52,7 +53,7 @@ class _SettingsPageState extends State<SettingsPage> {
           _buildAccountActionTile(
             icon: Icons.alternate_email_rounded,
             title: 'Change email',
-            subtitle: FirebaseAuth.instance.currentUser?.email ?? '',
+            subtitle: Supabase.instance.client.auth.currentUser?.email ?? '',
             onTap: _showChangeEmailDialog,
           ),
           _buildAccountActionTile(
@@ -60,6 +61,20 @@ class _SettingsPageState extends State<SettingsPage> {
             title: 'Change password',
             subtitle: 'Update your account password',
             onTap: _showChangePasswordDialog,
+          ),
+          const SizedBox(height: 20),
+          SizedBox(
+            width: double.infinity,
+            child: OutlinedButton.icon(
+              onPressed: _deleteAccount,
+              icon: const Icon(Icons.delete_outline_rounded),
+              label: const Text('Delete Account'),
+              style: OutlinedButton.styleFrom(
+                foregroundColor: const Color(0xFFB42318),
+                side: const BorderSide(color: Color(0xFFF0B8B2), width: 1.2),
+                padding: const EdgeInsets.symmetric(vertical: 15),
+              ),
+            ),
           ),
           const SizedBox(height: 20),
           SizedBox(
@@ -79,6 +94,7 @@ class _SettingsPageState extends State<SettingsPage> {
       ),
     );
   }
+          
 
   Widget _buildSecondaryPage({
     required IconData icon,
@@ -201,15 +217,13 @@ class _SettingsPageState extends State<SettingsPage> {
 
   Future<void> _showChangeEmailDialog() async {
     final emailController = TextEditingController();
-    final currentPasswordController = TextEditingController();
     final formKey = GlobalKey<FormState>();
-    var isLoading = false;
-    final currentEmail = FirebaseAuth.instance.currentUser?.email ?? '';
+    final currentEmail = Supabase.instance.client.auth.currentUser?.email ?? '';
 
     await showDialog<void>(
       context: context,
       builder: (dialogContext) => StatefulBuilder(
-        builder: (context, setDialogState) => AlertDialog(
+        builder: (dialogContext, setDialogState) => AlertDialog(
           scrollable: true,
           title: const Text('Change email'),
           content: Form(
@@ -233,67 +247,37 @@ class _SettingsPageState extends State<SettingsPage> {
                     return null;
                   },
                 ),
-                const SizedBox(height: 12),
-                TextFormField(
-                  controller: currentPasswordController,
-                  obscureText: true,
-                  decoration: const InputDecoration(
-                    labelText: 'Current password',
-                  ),
-                  validator: (value) =>
-                      value == null || value.isEmpty
-                          ? 'Enter your current password'
-                          : null,
-                ),
               ],
             ),
           ),
           actions: [
             TextButton(
-              onPressed: isLoading
-                  ? null
-                  : () => Navigator.pop(dialogContext),
+              onPressed: () => Navigator.pop(dialogContext),
               child: const Text('Cancel'),
             ),
             FilledButton(
-              onPressed: isLoading
-                  ? null
-                  : () async {
-                      if (!formKey.currentState!.validate()) return;
-                      setDialogState(() => isLoading = true);
-                      var success = false;
-                      try {
-                        success = await _changeEmail(
-                          emailController.text.trim(),
-                          currentPasswordController.text,
-                        ).timeout(const Duration(seconds: 15));
-                      } on TimeoutException {
-                        _showMessage(
-                          'The request timed out. Please try again.',
-                          isError: true,
-                        );
-                      } catch (_) {
-                        _showMessage(
-                          'Could not change your email. Please try again.',
-                          isError: true,
-                        );
-                      } finally {
-                        if (dialogContext.mounted) {
-                          setDialogState(() => isLoading = false);
-                          if (success) Navigator.pop(dialogContext);
-                        }
-                        if (success && mounted) {
-                          _showMessage('Verification email sent.');
-                        }
+              onPressed: () async {
+                if (!formKey.currentState!.validate()) return;
+                final newEmail = emailController.text.trim();
+                Navigator.pop(dialogContext);
+                await _sendOtpAndVerify(
+                  email: newEmail,
+                  type: OtpType.emailChange,
+                  onVerified: () async {
+                    try {
+                      await Supabase.instance.client.auth.updateUser(
+                        UserAttributes(email: newEmail),
+                      );
+                      if (mounted) {
+                        _showMessage('Verification email sent to new address.');
                       }
-                    },
-              child: isLoading
-                  ? const SizedBox(
-                      width: 18,
-                      height: 18,
-                      child: CircularProgressIndicator(strokeWidth: 2),
-                    )
-                  : const Text('Save'),
+                    } on AuthException catch (e) {
+                      if (mounted) _showMessage(_accountErrorMessage(e.code ?? ''), isError: true);
+                    }
+                  },
+                );
+              },
+              child: const Text('Continue'),
             ),
           ],
         ),
@@ -301,23 +285,19 @@ class _SettingsPageState extends State<SettingsPage> {
     );
     await Future<void>.delayed(const Duration(milliseconds: 300));
     emailController.dispose();
-    currentPasswordController.dispose();
   }
 
 Future<void> _showChangePasswordDialog() async {
     final newPasswordController = TextEditingController();
     final confirmPasswordController = TextEditingController();
-    final currentPasswordController = TextEditingController();
     final formKey = GlobalKey<FormState>();
-    var isLoading = false;
     bool obscureNew = true;
     bool obscureConfirm = true;
-    bool obscureCurrent = true;
 
     await showDialog<void>(
       context: context,
       builder: (dialogContext) => StatefulBuilder(
-        builder: (context, setDialogState) => AlertDialog(
+        builder: (dialogContext, setDialogState) => AlertDialog(
           scrollable: true,
           title: const Text('Change password'),
           content: Form(
@@ -344,9 +324,6 @@ Future<void> _showChangePasswordDialog() async {
                   validator: (value) {
                     final msg = passwordValidationMessage(value);
                     if (msg != null) return msg;
-                    if (value == currentPasswordController.text) {
-                      return 'New password must be different from current password';
-                    }
                     return null;
                   },
                 ),
@@ -374,77 +351,38 @@ Future<void> _showChangePasswordDialog() async {
                     return null;
                   },
                 ),
-                const SizedBox(height: 12),
-                TextFormField(
-                  controller: currentPasswordController,
-                  obscureText: obscureCurrent,
-                  decoration: InputDecoration(
-                    labelText: 'Current password',
-                    suffixIcon: IconButton(
-                      icon: Icon(
-                        obscureCurrent
-                            ? Icons.visibility_outlined
-                            : Icons.visibility_off_outlined,
-                      ),
-                      onPressed: () => setDialogState(
-                          () => obscureCurrent = !obscureCurrent),
-                    ),
-                    errorMaxLines: 3,
-                  ),
-                  validator: (value) =>
-                      value == null || value.isEmpty
-                          ? 'Enter your current password'
-                          : null,
-                ),
               ],
             ),
           ),
           actions: [
             TextButton(
-              onPressed: isLoading
-                  ? null
-                  : () => Navigator.pop(dialogContext),
+              onPressed: () => Navigator.pop(dialogContext),
               child: const Text('Cancel'),
             ),
             FilledButton(
-              onPressed: isLoading
-                  ? null
-                  : () async {
-                      if (!formKey.currentState!.validate()) return;
-                      setDialogState(() => isLoading = true);
-                      var success = false;
-                      try {
-                        success = await _changePassword(
-                          newPasswordController.text,
-                          currentPasswordController.text,
-                        ).timeout(const Duration(seconds: 15));
-                      } on TimeoutException {
-                        _showMessage(
-                          'The request timed out. Please try again.',
-                          isError: true,
-                        );
-                      } catch (_) {
-                        _showMessage(
-                          'Could not change your password. Please try again.',
-                          isError: true,
-                        );
-                      } finally {
-                        if (dialogContext.mounted) {
-                          setDialogState(() => isLoading = false);
-                          if (success) Navigator.pop(dialogContext);
-                        }
-                        if (success && mounted) {
-                          _showMessage('Password updated successfully.');
-                        }
+              onPressed: () async {
+                if (!formKey.currentState!.validate()) return;
+                Navigator.pop(dialogContext);
+                final currentUser = Supabase.instance.client.auth.currentUser;
+                if (currentUser == null) return;
+                await _sendOtpAndVerify(
+                  email: currentUser.email!,
+                  type: OtpType.recovery, // use recovery OTP for password change verification
+                  onVerified: () async {
+                    try {
+                      await Supabase.instance.client.auth.updateUser(
+                        UserAttributes(password: newPasswordController.text.trim()),
+                      );
+                      if (mounted) {
+                        _showMessage('Password updated – confirmation email sent.');
                       }
-                    },
-              child: isLoading
-                  ? const SizedBox(
-                      width: 18,
-                      height: 18,
-                      child: CircularProgressIndicator(strokeWidth: 2),
-                    )
-                  : const Text('Save'),
+                    } on AuthException catch (e) {
+                      if (mounted) _showMessage(_accountErrorMessage(e.code ?? ''), isError: true);
+                    }
+                  },
+                );
+              },
+              child: const Text('Continue'),
             ),
           ],
         ),
@@ -453,49 +391,6 @@ Future<void> _showChangePasswordDialog() async {
     await Future<void>.delayed(const Duration(milliseconds: 300));
     newPasswordController.dispose();
     confirmPasswordController.dispose();
-    currentPasswordController.dispose();
-  }
-
-  Future<bool> _reauthenticate(String currentPassword) async {
-    final user = FirebaseAuth.instance.currentUser;
-    final email = user?.email;
-    if (user == null || email == null) {
-      _showMessage('Unable to find the current account.', isError: true);
-      return false;
-    }
-    final credential = EmailAuthProvider.credential(
-      email: email,
-      password: currentPassword,
-    );
-    await user.reauthenticateWithCredential(credential);
-    return true;
-  }
-
-  Future<bool> _changeEmail(String email, String currentPassword) async {
-    try {
-      if (await _reauthenticate(currentPassword)) {
-        await FirebaseAuth.instance.currentUser!.verifyBeforeUpdateEmail(email);
-        return true;
-      }
-    } on FirebaseAuthException catch (error) {
-      _showMessage(_accountErrorMessage(error.code), isError: true);
-    }
-    return false;
-  }
-
-  Future<bool> _changePassword(
-    String newPassword,
-    String currentPassword,
-  ) async {
-    try {
-      if (await _reauthenticate(currentPassword)) {
-        await FirebaseAuth.instance.currentUser!.updatePassword(newPassword);
-        return true;
-      }
-    } on FirebaseAuthException catch (error) {
-      _showMessage(_accountErrorMessage(error.code), isError: true);
-    }
-    return false;
   }
 
   String _accountErrorMessage(String code) {
@@ -532,10 +427,106 @@ Future<void> _showChangePasswordDialog() async {
   }
 
   Future<void> _signOut() async {
-    await FirebaseAuth.instance.signOut();
+    await Supabase.instance.client.auth.signOut();
     if (mounted) {
       Navigator.of(context)
           .pushReplacement(MaterialPageRoute(builder: (_) => const AuthPage()));
     }
+  }
+
+  Future<void> _deleteAccount() async {
+    final user = Supabase.instance.client.auth.currentUser;
+    if (user == null) return;
+
+    // Show confirmation dialog
+    final shouldDelete = await showDialog<bool>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: const Text('Delete Account'),
+        content: const Text(
+          'Are you sure you want to permanently delete your account? '
+          'This action cannot be undone.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(dialogContext, false),
+            child: const Text('Cancel'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(dialogContext, true),
+            child: const Text('Delete'),
+          ),
+        ],
+      ),
+    );
+
+    if (shouldDelete != true) return;
+
+    // Send OTP for re-authentication
+    await _sendOtpForReauthentication(user.email!);
+  }
+
+  Future<void> _sendOtpForReauthentication(String email) async {
+    await Supabase.instance.client.auth
+        .signInWithOtp(email: email, shouldCreateUser: false);
+    if (!mounted) return;
+    Navigator.of(context).push(
+      MaterialPageRoute(
+        builder: (_) => OtpVerificationScreen(
+          email: email,
+          action: 'reauthenticate',
+          onDelete: _deleteAccountWithOtpVerified,
+        ),
+      ),
+    );
+  }
+
+  Future<void> _deleteAccountWithOtpVerified() async {
+    // OTP verified, now delete the account
+    final user = Supabase.instance.client.auth.currentUser;
+    if (user == null) return;
+
+    try {
+      // Delete the user via Supabase admin API
+      await Supabase.instance.client.auth.admin.deleteUser(user.id);
+      if (!mounted) return;
+      // Sign out and navigate to home
+      await Supabase.instance.client.auth.signOut();
+      Navigator.of(context).pushReplacement(
+        MaterialPageRoute(builder: (_) => const AuthPage()),
+      );
+      _showMessage('Account permanently deleted.');
+    } on AuthException catch (e) {
+      if (!mounted) return;
+      _showMessage(_accountErrorMessage(e.code ?? ''), isError: true);
+    }
+  }
+
+  Future<void> _sendOtpAndVerify({
+    required String email,
+    required OtpType type,
+    required Future<void> Function() onVerified,
+  }) async {
+    final auth = Supabase.instance.client.auth;
+    try {
+      await auth.signInWithOtp(email: email);
+      if (!mounted) return;
+      Navigator.of(context).push(
+        MaterialPageRoute(
+          builder: (_) => const OtpVerificationScreen(
+            email: AutofillHints.email,
+            action: 'reauthenticate',
+          ),
+          ),
+        );
+} catch (e) {
+      if (mounted) _showMessage(e.toString(), isError: true);
+    }
+  }
+
+  String? passwordValidationMessage(String? value) {
+    if (value == null || value.isEmpty) return 'Enter a password';
+    if (value.length < 6) return 'Password must be at least 6 characters';
+    return null;
   }
 }

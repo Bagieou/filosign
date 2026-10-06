@@ -1,0 +1,7 @@
+[
+{"id": "basic_deaf", "title": "Deaf", "videoAsset": "assets/videos/basic/66.mp4", "order": 0}, 
+{"id": "basic_hard_of_hearing", "title": "Hard of hearing", "videoAsset": "assets/videos/basic/67.mp4", "order": 1}, 
+{"id": "basic_wheelchair_person", "title": "Wheelchair person", "videoAsset": "assets/videos/basic/68.mp4", "order": 2}, 
+{"id": "basic_blind", "title": "Blind", "videoAsset": "assets/videos/basic/69.mp4", "order": 3}, 
+{"id": "basic_deaf_blind", "title": "Deaf Blind", "videoAsset": "assets/videos/basic/70.mp4", "order": 4}
+]
