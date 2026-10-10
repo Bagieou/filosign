@@ -28,7 +28,7 @@ class _HomePageState extends State<HomePage> {
   @override
   Widget build(BuildContext context) {
     final username = Supabase.instance.client.auth.currentUser?.userMetadata?['full_name'] as String?;
-    final pages = [_buildDashboard(), ProfilePage(username: username), SettingsPage()];
+    final pages = [_buildDashboard(), const ProfilePage(), SettingsPage()];
 
     return Scaffold(
       backgroundColor: const Color(0xFFF6FBFA),
