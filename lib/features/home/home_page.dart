@@ -1,4 +1,5 @@
 import 'package:filosign/features/home/practice_screen.dart';
+import 'package:filosign/features/quiz/quiz_home_screen.dart';
 import 'package:flutter/material.dart';
 
 import 'package:supabase_flutter/supabase_flutter.dart';
@@ -148,6 +149,19 @@ class _HomePageState extends State<HomePage> {
                    onTap: () => Navigator.push(
                     context,
                     MaterialPageRoute(builder: (_) => const PracticeScreen()),
+                  ),
+                ),
+              ),
+              const SizedBox(width: 14),
+              Expanded(
+                child: _buildActionButton(
+                  icon: Icons.quiz_rounded,
+                  title: 'Quiz',
+                  subtitle: '10 questions',
+                  color: const Color(0xFF6D5BD0),
+                  onTap: () => Navigator.push(
+                    context,
+                    MaterialPageRoute(builder: (_) => const QuizHomeScreen()),
                   ),
                 ),
               ),

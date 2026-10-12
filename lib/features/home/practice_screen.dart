@@ -1,5 +1,8 @@
 import 'package:flutter/material.dart';
 
+import '../../learn/learn_repository.dart';
+import '../practice/live_practice_screen.dart';
+
 class PracticeScreen extends StatelessWidget {
   const PracticeScreen({super.key});
 
@@ -49,25 +52,26 @@ class PracticeScreen extends StatelessWidget {
 }
 
 class _PracticeCategory {
+  final String id; // Learn category id (assets/learn/<id>.json)
   final String title;
   final IconData icon;
   final int totalItems;
 
-  const _PracticeCategory(this.title, this.icon, this.totalItems);
+  const _PracticeCategory(this.id, this.title, this.icon, this.totalItems);
 }
 
 const List<_PracticeCategory> _categories = [
-  _PracticeCategory('Basics', Icons.people_outline, 5),
-  _PracticeCategory('Letters', Icons.abc_outlined, 26),
-  _PracticeCategory('Numbers', Icons.numbers_outlined, 10),
-  _PracticeCategory('Days', Icons.calendar_today_outlined, 10),
-  _PracticeCategory('Months', Icons.date_range_outlined, 12),
-  _PracticeCategory('Colors', Icons.palette_outlined, 13),
-  _PracticeCategory('Greetings', Icons.waving_hand_outlined, 10),
-  _PracticeCategory('Family', Icons.family_restroom_outlined, 15),
-  _PracticeCategory('Food', Icons.restaurant_outlined, 10),
-  _PracticeCategory('Drinks', Icons.local_drink_outlined, 10),
-  _PracticeCategory('Communication', Icons.emergency_outlined, 10),
+  _PracticeCategory('basic', 'Basics', Icons.people_outline, 5),
+  _PracticeCategory('letters', 'Letters', Icons.abc_outlined, 26),
+  _PracticeCategory('numbers', 'Numbers', Icons.numbers_outlined, 10),
+  _PracticeCategory('days', 'Days', Icons.calendar_today_outlined, 10),
+  _PracticeCategory('months', 'Months', Icons.date_range_outlined, 12),
+  _PracticeCategory('colors', 'Colors', Icons.palette_outlined, 13),
+  _PracticeCategory('greetings', 'Greetings', Icons.waving_hand_outlined, 10),
+  _PracticeCategory('family', 'Family', Icons.family_restroom_outlined, 15),
+  _PracticeCategory('food', 'Food', Icons.restaurant_outlined, 10),
+  _PracticeCategory('drinks', 'Drinks', Icons.local_drink_outlined, 10),
+  _PracticeCategory('communication', 'Communication', Icons.emergency_outlined, 10),
 ];
 
 class _CategoryTile extends StatelessWidget {
@@ -79,14 +83,12 @@ class _CategoryTile extends StatelessWidget {
     return Material(
       color: Colors.transparent,
       child: InkWell(
-        onTap: () {
-          ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(
-              content: Text('${category.title} practice - coming soon'),
-              behavior: SnackBarBehavior.floating,
-              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-              backgroundColor: const Color(0xFF087F73),
-            ),
+        onTap: () async {
+          final learn = await LearnRepository.instance.getCategory(category.id);
+          if (!context.mounted) return;
+          Navigator.push(
+            context,
+            MaterialPageRoute(builder: (_) => LivePracticeScreen(category: learn)),
           );
         },
         borderRadius: BorderRadius.circular(20),

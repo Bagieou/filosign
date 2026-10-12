@@ -1,5 +1,6 @@
 import 'package:filosign/features/auth/otp_verification_screen.dart';
 import 'package:filosign/features/home/home_page.dart';
+import 'package:flutter/foundation.dart' show kDebugMode;
 import 'package:flutter/material.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
@@ -479,6 +480,20 @@ class _AuthPageState extends State<AuthPage> {
             ),
 
             const SizedBox(height: 12),
+
+            // TEST BUILDS ONLY: skip login to test Practice/Quiz. Shown in debug
+            // builds, or release builds made with --dart-define=FILOSIGN_TEST=true.
+            if (kDebugMode || const bool.fromEnvironment('FILOSIGN_TEST'))
+              Center(
+                child: TextButton(
+                  onPressed: () => Navigator.pushAndRemoveUntil(
+                    context,
+                    MaterialPageRoute(builder: (_) => const HomePage()),
+                    (route) => false,
+                  ),
+                  child: const Text('Skip login (debug build only)'),
+                ),
+              ),
 
             // Alternative sign-in options - show based on action
 if (!_isSignUp) ...[
