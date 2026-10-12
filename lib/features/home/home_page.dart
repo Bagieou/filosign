@@ -1,6 +1,6 @@
 import 'package:filosign/features/home/practice_screen.dart';
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
-
 
 import 'package:filosign/learn/learn_repository.dart';
 import 'package:filosign/learn/lesson.dart';
@@ -12,17 +12,16 @@ import 'profile_page.dart';
 import 'settings_page.dart';
 import 'learn_screen.dart';
 import 'search_results_screen.dart';
-
-
+import 'package:filosign/learn/category.dart';
 
 class CurrentLessonData {
-  final String categoryTitle;
+  final LearnCategory category;
   final int videoId;
   final List<Lesson> lessons;
   final int initialIndex;
 
   CurrentLessonData({
-    required this.categoryTitle,
+    required this.category,
     required this.videoId,
     required this.lessons,
     required this.initialIndex,
@@ -106,7 +105,7 @@ class _HomePageState extends State<HomePage> {
 
         if (initialIndex != -1) {
           return CurrentLessonData(
-            categoryTitle: category.title,
+            category: category,
             videoId: videoId,
             lessons: category.sortedLessons,
             initialIndex: initialIndex,
@@ -532,7 +531,7 @@ class _HomePageState extends State<HomePage> {
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
                     Text(
-                      data.categoryTitle, 
+                      data.category.title, 
                       style: const TextStyle(
                         color: Color(0xFF153B39),
                         fontWeight: FontWeight.w700,
@@ -559,7 +558,7 @@ class _HomePageState extends State<HomePage> {
                             builder: (_) => LessonPlayerScreen(
                               lessons: data.lessons,
                               initialIndex: data.initialIndex,
-                              categoryTitle: data.categoryTitle,
+                              category: data.category,
                             ),
                           ),
                         ),

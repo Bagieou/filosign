@@ -32,7 +32,8 @@ class _SearchResultsScreenState extends State<SearchResultsScreen> {
       for (int i = 0; i < cat.sortedLessons.length; i++) {
         final lesson = cat.sortedLessons[i];
         if (lesson.title.toLowerCase().contains(lower)) {
-          results.add(_SearchResult(category: cat, lesson: lesson, lessonIndex: i));
+          results.add(
+              _SearchResult(category: cat, lesson: lesson, lessonIndex: i));
         }
       }
     }
@@ -52,7 +53,10 @@ class _SearchResultsScreenState extends State<SearchResultsScreen> {
         ),
         title: Text(
           'Results for "${widget.query}"',
-          style: const TextStyle(color: Color(0xFF153B39), fontWeight: FontWeight.w800, fontSize: 20),
+          style: const TextStyle(
+              color: Color(0xFF153B39),
+              fontWeight: FontWeight.w800,
+              fontSize: 20),
         ),
       ),
       body: FutureBuilder<List<_SearchResult>>(
@@ -64,7 +68,8 @@ class _SearchResultsScreenState extends State<SearchResultsScreen> {
           final items = snapshot.data ?? [];
           if (items.isEmpty) {
             return const Center(
-              child: Text('No lessons found', style: TextStyle(color: Color(0xFF6B8581), fontSize: 16)),
+              child: Text('No lessons found',
+                  style: TextStyle(color: Color(0xFF6B8581), fontSize: 16)),
             );
           }
           return ListView.separated(
@@ -86,7 +91,11 @@ class _SearchResult {
   final LearnCategory category;
   final Lesson lesson;
   final int lessonIndex;
-  _SearchResult({required this.category, required this.lesson, required this.lessonIndex});
+  _SearchResult({
+    required this.category,
+    required this.lesson,
+    required this.lessonIndex,
+  });
 }
 
 class _ResultTile extends StatelessWidget {
@@ -106,13 +115,10 @@ class _ResultTile extends StatelessWidget {
               builder: (_) => LessonPlayerScreen(
                 lessons: result.category.sortedLessons,
                 initialIndex: result.lessonIndex,
-                categoryTitle: result.category.title,
+                category: result.category,
               ),
             ),
           );
-          // The LessonFlowController will start at the correct index via its constructor
-          // which finds the first locked lesson. To jump directly, we could modify controller,
-          // but for simplicity we rely on existing flow.
         },
         child: Container(
           padding: const EdgeInsets.all(16),
@@ -121,7 +127,10 @@ class _ResultTile extends StatelessWidget {
             borderRadius: BorderRadius.circular(16),
             border: Border.all(color: const Color(0xFFE2EEEB)),
             boxShadow: const [
-              BoxShadow(color: Color(0x14087F73), blurRadius: 8, offset: Offset(0, 4)),
+              BoxShadow(
+                  color: Color(0x14087F73),
+                  blurRadius: 8,
+                  offset: Offset(0, 4)),
             ],
           ),
           child: Row(
@@ -134,7 +143,8 @@ class _ResultTile extends StatelessWidget {
                   child: Container(
                     color: const Color(0xFFF0F5F4),
                     alignment: Alignment.center,
-                    child: const Icon(Icons.videocam_off_rounded, size: 28, color: Color(0xFF9DB3AE)),
+                    child: const Icon(Icons.videocam_off_rounded,
+                        size: 28, color: Color(0xFF9DB3AE)),
                   ),
                 ),
               ),
@@ -154,12 +164,14 @@ class _ResultTile extends StatelessWidget {
                     const SizedBox(height: 4),
                     Text(
                       result.category.title,
-                      style: const TextStyle(color: Color(0xFF6B8581), fontSize: 12),
+                      style: const TextStyle(
+                          color: Color(0xFF6B8581), fontSize: 12),
                     ),
                   ],
                 ),
               ),
-              const Icon(Icons.chevron_right_rounded, color: Color(0xFF6B8581)),
+              const Icon(Icons.chevron_right_rounded,
+                  color: Color(0xFF6B8581)),
             ],
           ),
         ),

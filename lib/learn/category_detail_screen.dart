@@ -3,7 +3,6 @@ import 'learn_repository.dart';
 import 'category.dart';
 import 'lesson_player_screen.dart';
 
-
 class CategoryDetailScreen extends StatelessWidget {
   final String categoryId;
   const CategoryDetailScreen({super.key, required this.categoryId});
@@ -49,11 +48,13 @@ class CategoryDetailScreen extends StatelessWidget {
                 padding: const EdgeInsets.fromLTRB(22, 20, 22, 24),
                 sliver: SliverList.separated(
                   itemCount: cat.sortedLessons.length,
-                  separatorBuilder: (_, __) => const Divider(height: 1, color: Color(0xFFE2EEEB)),
+                  separatorBuilder: (_, __) =>
+                      const Divider(height: 1, color: Color(0xFFE2EEEB)),
                   itemBuilder: (context, index) {
                     final lesson = cat.sortedLessons[index];
                     return ListTile(
-                      contentPadding: const EdgeInsets.symmetric(vertical: 8, horizontal: 0),
+                      contentPadding: const EdgeInsets.symmetric(
+                          vertical: 8, horizontal: 0),
                       title: Text(
                         lesson.title,
                         style: const TextStyle(
@@ -68,7 +69,7 @@ class CategoryDetailScreen extends StatelessWidget {
                           builder: (_) => LessonPlayerScreen(
                             lessons: cat.sortedLessons,
                             initialIndex: index,
-                            categoryTitle: cat.title,
+                            category: cat,
                           ),
                         ),
                       ),

@@ -38,5 +38,14 @@ jobs:
 
       - name: Run Platform Compilation Test
         run: |
-          # This command natively triggers Pod installations internally during compilation
-          flutter build ios --release --no-codesign -v
+          # Compiles the workspace and creates an unsigned .ipa package bundle
+          flutter build ipa --release --no-codesign -v
+
+      - name: Upload IPA Artifact to GitHub
+        uses: actions/upload-artifact@v4
+        with:
+          name: Unsigned-iOS-App
+          path: |
+            build/ios/ipa/*.ipa
+            build/ios/iphoneos/*.app
+          retention-days: 7

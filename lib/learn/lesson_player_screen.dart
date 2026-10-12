@@ -3,18 +3,21 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:video_player/video_player.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
-import 'lesson.dart';
+import 'package:filosign/learn/category.dart';
+import 'package:filosign/learn/lesson.dart';
+import 'package:filosign/learn/live_sign_lesson_screen.dart';
+import 'package:filosign/features/quiz/quiz_screen.dart';
 
 class LessonPlayerScreen extends StatefulWidget {
   final List<Lesson> lessons;
   final int initialIndex;
-  final String categoryTitle;
+  final LearnCategory category;
 
   const LessonPlayerScreen({
     super.key,
     required this.lessons,
     required this.initialIndex,
-    required this.categoryTitle,
+    required this.category,
   });
 
   @override
@@ -27,9 +30,7 @@ class _LessonPlayerScreenState extends State<LessonPlayerScreen> {
   bool _initialized = false;
   bool _showControls = true;
   Timer? _hideControlsTimer;
-  
-  // <--- ADDED: Flag to prevent multiple saves when video ends
-  bool _hasSavedCurrentLesson = false; 
+  bool _hasSavedCurrentLesson = false;
 
   @override
   void initState() {
@@ -39,10 +40,10 @@ class _LessonPlayerScreenState extends State<LessonPlayerScreen> {
   }
 
   Future<void> _initController(Lesson lesson) async {
+    if (mounted) setState(() => _initialized = false);
     _controller?.removeListener(_onVideoUpdate);
     await _controller?.dispose();
-
-    // <--- ADDED: Reset the save flag whenever a new video is initialized
+    _controller = null;
     _hasSavedCurrentLesson = false;
 
     if (lesson.videoAsset == null || lesson.videoAsset!.isEmpty) {
@@ -67,12 +68,12 @@ class _LessonPlayerScreenState extends State<LessonPlayerScreen> {
   void _onVideoUpdate() {
     if (_controller == null) return;
 
-    // <--- ADDED: Check if the video has finished playing
-    final isFinished = _controller!.value.position >= _controller!.value.duration &&
+    final isFinished = _controller!.value.position >=
+            _controller!.value.duration &&
         _controller!.value.duration > Duration.zero;
 
     if (isFinished && !_hasSavedCurrentLesson) {
-      _hasSavedCurrentLesson = true; // Mark as saved
+      _hasSavedCurrentLesson = true;
       _saveCurrentLesson(widget.lessons[_currentIndex]);
     }
 
@@ -85,23 +86,22 @@ class _LessonPlayerScreenState extends State<LessonPlayerScreen> {
     try {
       final RegExp regExp = RegExp(r'(\d+)\.mp4$');
       final match = regExp.firstMatch(lesson.videoAsset ?? '');
-      
+
       if (match == null) {
         debugPrint('Could not parse video ID from asset: ${lesson.videoAsset}');
-        return; 
+        return;
       }
 
       final videoId = int.tryParse(match.group(1)!);
-      
       if (videoId == null) {
-        debugPrint('Parsed video ID is not a valid integer: ${match.group(1)}');
+        debugPrint(
+            'Parsed video ID is not a valid integer: ${match.group(1)}');
         return;
       }
+
       await Supabase.instance.client.rpc(
         'save_current_video',
-        params: {
-          'p_video_id': videoId, 
-        },
+        params: {'p_video_id': videoId},
       );
       debugPrint('Successfully saved current lesson for video ID: $videoId');
     } catch (e) {
@@ -138,11 +138,45 @@ class _LessonPlayerScreenState extends State<LessonPlayerScreen> {
     });
   }
 
-  void _goNext() {
-    if (_currentIndex < widget.lessons.length - 1) {
-      setState(() => _currentIndex++);
-      _initController(widget.lessons[_currentIndex]);
+  Future<void> _goNext() async {
+    _controller?.pause();
+    final lesson = widget.lessons[_currentIndex];
+
+    final result = await Navigator.push<Map<String, dynamic>>(
+      context,
+      MaterialPageRoute(
+        builder: (_) => LessonLiveSignScreen(
+          lesson: lesson,
+          category: widget.category,
+        ),
+      ),
+    );
+    if (!mounted) return;
+
+    final passed = result?['success'] == true || result?['skipped'] == true;
+    if (!passed) {
+      // User backed out of the live-sign screen: resume the same video.
+      _controller?.play();
+      return;
     }
+
+    // More lessons left in this category: advance to the next one.
+    if (_currentIndex + 1 < widget.lessons.length) {
+      setState(() => _currentIndex++);
+      await _initController(widget.lessons[_currentIndex]);
+      return;
+    }
+
+    // Last lesson of the category: run the 10-question quiz, then return
+    // to Learn.
+    await Navigator.push(
+      context,
+      MaterialPageRoute(
+        builder: (_) => QuizScreen(category: widget.category),
+      ),
+    );
+    if (!mounted) return;
+    Navigator.pop(context, true);
   }
 
   void _goPrev() {
@@ -235,9 +269,8 @@ class _LessonPlayerScreenState extends State<LessonPlayerScreen> {
   Widget _buildVideoPlayer() {
     if (_controller == null) return const SizedBox();
     final size = _controller!.value.size;
-    final aspectRatio = size.width > 0 && size.height > 0
-        ? size.width / size.height
-        : 16 / 9;
+    final aspectRatio =
+        size.width > 0 && size.height > 0 ? size.width / size.height : 16 / 9;
 
     return GestureDetector(
       onTap: _toggleControls,
@@ -279,7 +312,6 @@ class _LessonPlayerScreenState extends State<LessonPlayerScreen> {
         child: SafeArea(
           child: Stack(
             children: [
-              // Centered playback controls (rewind / play-pause / forward)
               Center(
                 child: Row(
                   mainAxisSize: MainAxisSize.min,
@@ -291,7 +323,9 @@ class _LessonPlayerScreenState extends State<LessonPlayerScreen> {
                     ),
                     const SizedBox(width: 16),
                     _buildControlButton(
-                      icon: _controller!.value.isPlaying ? Icons.pause_rounded : Icons.play_arrow_rounded,
+                      icon: _controller!.value.isPlaying
+                          ? Icons.pause_rounded
+                          : Icons.play_arrow_rounded,
                       onPressed: _togglePlayPause,
                       size: 64,
                       iconSize: 36,
@@ -305,7 +339,6 @@ class _LessonPlayerScreenState extends State<LessonPlayerScreen> {
                   ],
                 ),
               ),
-              // Bottom bar: speed selector top‑right, then progress bar + timestamps
               Positioned(
                 left: 0,
                 right: 0,
@@ -313,7 +346,6 @@ class _LessonPlayerScreenState extends State<LessonPlayerScreen> {
                 child: Column(
                   mainAxisSize: MainAxisSize.min,
                   children: [
-                    // Playback speed selector on the right, above the progress bar
                     Padding(
                       padding: const EdgeInsets.fromLTRB(16, 0, 16, 8),
                       child: Row(
@@ -323,30 +355,31 @@ class _LessonPlayerScreenState extends State<LessonPlayerScreen> {
                         ],
                       ),
                     ),
-                    // Progress bar
                     VideoProgressIndicator(
                       _controller!,
                       allowScrubbing: true,
-                      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+                      padding: const EdgeInsets.symmetric(
+                          horizontal: 16, vertical: 8),
                       colors: VideoProgressColors(
                         playedColor: const Color(0xFF087F73),
                         bufferedColor: Colors.white30,
                         backgroundColor: Colors.white10,
                       ),
                     ),
-                    // Timestamps
                     Padding(
                       padding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
                       child: Row(
                         children: [
                           Text(
                             _buildTimeText(_controller!.value.position),
-                            style: const TextStyle(color: Colors.white, fontSize: 12),
+                            style: const TextStyle(
+                                color: Colors.white, fontSize: 12),
                           ),
                           const Spacer(),
                           Text(
                             _buildTimeText(_controller!.value.duration),
-                            style: const TextStyle(color: Colors.white, fontSize: 12),
+                            style: const TextStyle(
+                                color: Colors.white, fontSize: 12),
                           ),
                         ],
                       ),
@@ -412,11 +445,14 @@ class _LessonPlayerScreenState extends State<LessonPlayerScreen> {
         child: Row(
           mainAxisSize: MainAxisSize.min,
           children: [
-            Icon(Icons.speed_rounded, color: Colors.white, size: 18),
+            const Icon(Icons.speed_rounded, color: Colors.white, size: 18),
             const SizedBox(width: 6),
             Text(
               '${_controller!.value.playbackSpeed.toStringAsFixed(1)}x',
-              style: const TextStyle(color: Colors.white, fontSize: 13, fontWeight: FontWeight.w600),
+              style: const TextStyle(
+                  color: Colors.white,
+                  fontSize: 13,
+                  fontWeight: FontWeight.w600),
             ),
           ],
         ),
@@ -473,7 +509,7 @@ class _LessonPlayerScreenState extends State<LessonPlayerScreen> {
           ),
           const SizedBox(height: 8),
           Text(
-            '${widget.categoryTitle} · Lesson ${_currentIndex + 1} of ${widget.lessons.length}',
+            '${widget.category.title} · Lesson ${_currentIndex + 1} of ${widget.lessons.length}',
             style: const TextStyle(
               color: Color(0xFF6B8581),
               fontSize: 14,
