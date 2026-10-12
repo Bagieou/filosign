@@ -7,11 +7,11 @@ import 'change_password_screen.dart';
 class OtpVerificationScreen extends StatefulWidget {
   final String email;
   final String action; // 'signup', 'forgot_password', 'signin_with_code', 'reauthenticate'
-  final VoidCallback? onDelete; // Callback for delete account after reauth
+  final VoidCallback? onDelete; // No longer triggered inside this widget for reauthenticate
 
   const OtpVerificationScreen({
     required this.email,
-    required this.action,
+    required this.action, 
     this.onDelete,
     super.key,
   });
@@ -31,59 +31,54 @@ class _OtpVerificationScreenState extends State<OtpVerificationScreen> {
     super.dispose();
   }
 
-Future<void> _verifyOtp() async {
+  Future<void> _verifyOtp() async {
+    final otp = _otpController.text.trim();
+    if (otp.length != 6) {
+      _showError('OTP must be 6 digits');
+      return;
+    }
+    if (widget.action == 'reauthenticate') {
+      Navigator.pop(context, otp); // Pass the 6-digit code string backward
+      return;
+    }
     setState(() => _isLoading = true);
     try {
-      final otp = _otpController.text.trim();
-      if (otp.length != 6) {
-        _showError('OTP must be 6 digits');
-        return;
+      // Determine OTP type based on action
+      OtpType type;
+      if (widget.action == 'signup') {
+        type = OtpType.signup;
+      } else if (widget.action == 'forgot_password'){
+        type = OtpType.recovery; // Used for password recovery flows
+      } else if (widget.action == 'change_email'){
+        type = OtpType.emailChange;
+      } else {
+        type = OtpType.magiclink;
       }
 
-       // Determine OTP type based on action
-       OtpType type;
-       if (widget.action == 'signup') {
-         type = OtpType.signup;
-       } else if (widget.action == 'forgot_password'){
-         type = OtpType.recovery;
-       } else if (widget.action == 'reauthenticate') {
-         type = OtpType.magiclink;
-       } else {
-         type = OtpType.magiclink;
-       }
+      await Supabase.instance.client.auth.verifyOTP(
+        email: widget.email,
+        token: otp,
+        type: type,
+      );
 
-       await Supabase.instance.client.auth.verifyOTP(
-         email: widget.email,
-         token: otp,
-         type: type,
-       );
-
-       if (!mounted) return;
-       if (widget.action == 'forgot_password') {
-         // For forgot password, after OTP verification navigate to change password screen
-         if (!mounted) return;
-         Navigator.push(
-           context,
-           MaterialPageRoute(
-             builder: (_) => ChangePasswordScreen(
-               email: widget.email,
-             ),
-           ),
-         );
-} else if (widget.action == 'reauthenticate') {
-          // For reauthenticate, pop back to settings screen and call onDelete
-          if (widget.onDelete != null) {
-            widget.onDelete!();
-          }
-          Navigator.pop(context);
-        } else {
-         // For signup and signin_with_code, go to home
-         Navigator.pushAndRemoveUntil(
-           context,
-           MaterialPageRoute(builder: (_) => const HomePage()),
-           (route) => false,
-         );
-       }
+      if (!mounted) return;
+      if (widget.action == 'forgot_password') {
+        Navigator.pushReplacement(
+          context,
+          MaterialPageRoute(
+            builder: (_) => ChangePasswordScreen(
+              email: widget.email,
+            ),
+          ),
+        );
+      } else {
+        // For signup and signin_with_code, go to home
+        Navigator.pushAndRemoveUntil(
+          context,
+          MaterialPageRoute(builder: (_) => const HomePage()),
+          (route) => false,
+        );
+      }  
     } on AuthException catch (e) {
       if (!mounted) return;
       _showError(e.message);
@@ -121,11 +116,10 @@ Future<void> _verifyOtp() async {
               const Icon(Icons.security, size: 80, color: Color(0xFF087F73)),
               const SizedBox(height: 24),
               Text(
-                widget.action == 'signup'
-                    ? 'Verify your email'
-                    : widget.action == 'forgot_password'
-                        ? 'Enter OTP sent to your email'
-                        : 'Enter sign-in code',
+                widget.action == 'signup' ? 'Verify your email'
+                    : widget.action == 'forgot_password' ? 'Reset your password'
+                        : widget.action == 'reauthenticate'? 'Security Verification'
+                            : 'Enter sign-in code',
                 style: const TextStyle(
                   fontSize: 22,
                   fontWeight: FontWeight.w800,
@@ -133,13 +127,9 @@ Future<void> _verifyOtp() async {
                 ),
               ),
               const SizedBox(height: 8),
-              Text(
-                widget.action == 'signup'
-                    ? 'We sent a 6-digit OTP to your email address'
-                    : widget.action == 'forgot_password'
-                        ? 'We sent a 6-digit OTP to your email address'
-                        : 'We sent a 6-digit OTP to your email address',
-                style: const TextStyle(color: Color(0xFF64807C), fontSize: 14),
+              const Text(
+                'We sent a 6-digit OTP to your email address',
+                style: TextStyle(color: Color(0xFF64807C), fontSize: 14),
               ),
               const SizedBox(height: 24),
               TextField(
@@ -171,7 +161,6 @@ Future<void> _verifyOtp() async {
                         foregroundColor: Colors.white,
                       ),
                       child: const Text('Verify OTP', style: TextStyle(fontSize: 16, fontWeight: FontWeight.w700)),
-                      
                     ),
               const SizedBox(height: 16),
               TextButton(

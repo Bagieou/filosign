@@ -2,23 +2,19 @@ import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:flutter/material.dart';
 
 class ProfilePage extends StatelessWidget {
-  const ProfilePage({super.key, this.username});
-
-  final String? username;
+  const ProfilePage({super.key});
 
   @override
   Widget build(BuildContext context) {
     final user = Supabase.instance.client.auth.currentUser;
-    final metadataName = (user?.userMetadata?['full_name'] as String?)?.trim();
-    final String profileName = (username != null && username!.isNotEmpty)
-        ? username!
-        : (metadataName != null && metadataName.isNotEmpty)
-            ? metadataName
-            : (user?.email?.split('@').first ?? '');
+    final metadataName = (user?.userMetadata?['display_name'] as String?)?.trim();
+    final String profileName = metadataName != null && metadataName.isNotEmpty
+        ? metadataName
+        : (user?.email?.split('@').first ?? '');
 
     return _buildSecondaryPage(
       icon: Icons.person_rounded,
-      title: 'Profile',
+      title: 'Profile',   
       child: Column(
         children: [
           CircleAvatar(

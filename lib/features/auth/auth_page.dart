@@ -1,3 +1,4 @@
+import 'package:filosign/features/auth/legal_document_modal.dart';
 import 'package:filosign/features/auth/otp_verification_screen.dart';
 import 'package:filosign/features/home/home_page.dart';
 import 'package:flutter/foundation.dart' show kDebugMode;
@@ -68,6 +69,9 @@ class _AuthPageState extends State<AuthPage> {
   AuthAction _action = AuthAction.signInWithPassword;
   bool _isSignUp = false;
   bool _isLoading = false;
+  bool _acceptedTerms = false;
+  bool _acceptedPrivacy = false;
+  
 
   // Controllers
   final _emailController = TextEditingController();
@@ -138,35 +142,34 @@ class _AuthPageState extends State<AuthPage> {
 
     try {
       final AuthResponse response = await Supabase.instance.client.auth.signUp(
-      email: email,
-      password: password,
-      data: {'full_name': name},
-    );
+        email: email,
+        password: password,
+        data: {'display_name': name},
+      );
 
-    final userIdentities = response.user?.identities;
-    final emailIsTaken = userIdentities != null && userIdentities.isEmpty;
+      final userIdentities = response.user?.identities;
+      final emailIsTaken = userIdentities != null && userIdentities.isEmpty;
 
       if (emailIsTaken) {
-        await _signInWithCode(); 
+        await _signInWithCode();
         return;
       }
-      if (!mounted) return; 
-      
-      //fake sucess for existing emails, to prevent email leaks
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('A verification code has been sent to your email.')),
-        );
-      
-      Navigator.push(
-      context,
-      MaterialPageRoute(
-        builder: (_) => OtpVerificationScreen(
-          email: email,
-          action: 'signup',
-        ),
-      ),
-    );
+      if (!mounted) return;
 
+      //fake sucess for existing emails, to prevent email leaks
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('A verification code has been sent to your email.')),
+      );
+
+      Navigator.push(
+        context,
+        MaterialPageRoute(
+          builder: (_) => OtpVerificationScreen(
+            email: email,
+            action: 'signup',
+          ),
+        ),
+      );
     } on AuthException catch (e) {
       final lower = e.message.toLowerCase();
       if (lower.contains('already registered') || lower.contains('user already exists') || lower.contains('supplied email')) {
@@ -183,7 +186,7 @@ class _AuthPageState extends State<AuthPage> {
       if (mounted) setState(() => _isLoading = false);
     }
   }
-   
+
 //Password sign in
   Future<void> _signInWithPassword() async {
     _checkLockout();
@@ -301,6 +304,11 @@ class _AuthPageState extends State<AuthPage> {
 
 // Execute forgot password
   Future<void> _forgotPassword() async {
+      _checkLockout();
+       if (_isLockedOut) {
+        _showError('Account locked out. Try again in 15 minutes.');
+        return;
+      }
     final email = _emailController.text.trim();
 
     if (email.isEmpty) {
@@ -308,7 +316,7 @@ class _AuthPageState extends State<AuthPage> {
       return;
     }
 
-     setState(() => _isLoading = true);
+    setState(() => _isLoading = true);
     try {
       await Supabase.instance.client.auth.resetPasswordForEmail(email);
 
@@ -339,9 +347,58 @@ class _AuthPageState extends State<AuthPage> {
       SnackBar(content: Text(message)),
     );
   }
-  
+
+  bool get _primaryButtonDisabled {
+    if (_isSignUp) return !_acceptedTerms || !_acceptedPrivacy;
+    return _isLockedOut;
+  }
+
+Future<void> _openTerms() async {
+  await showDialog<void>(
+    context: context,
+    barrierColor: const Color(0x66000000),
+    builder: (_) => Dialog(
+      insetPadding: const EdgeInsets.symmetric(horizontal: 20, vertical: 40),
+      backgroundColor: Colors.transparent,
+      elevation: 0,
+      child: ConstrainedBox(
+        constraints: const BoxConstraints(maxWidth: 560, maxHeight: 720),
+        child: LegalDocumentModal(
+          title: 'Terms and Conditions',
+          assetPath: 'assets/html/terms.html',
+          onAgreed: () {
+            if (mounted) setState(() => _acceptedTerms = true);
+          },
+        ),
+      ),
+    ),
+  );
+}
+
+Future<void> _openPrivacy() async {
+  await showDialog<void>(
+    context: context,
+    barrierColor: const Color(0x66000000),
+    builder: (_) => Dialog(
+      insetPadding: const EdgeInsets.symmetric(horizontal: 20, vertical: 40),
+      backgroundColor: Colors.transparent,
+      elevation: 0,
+      child: ConstrainedBox(
+        constraints: const BoxConstraints(maxWidth: 560, maxHeight: 720),
+        child: LegalDocumentModal(
+          title: 'Privacy Policy',
+          assetPath: 'assets/html/policy.html',
+          onAgreed: () {
+            if (mounted) setState(() => _acceptedPrivacy = true);
+          },
+        ),
+      ),
+    ),
+  );
+}
+
   Widget _buildBrandHeader({bool light = false}) {
-    final foreground = light ? Colors.white : const Color(0xFF087F73);
+    final foreground = light ? Colors.white : Color(0xFF087F73);
     return Row(
       mainAxisSize: MainAxisSize.min,
       children: [
@@ -359,239 +416,7 @@ class _AuthPageState extends State<AuthPage> {
     );
   }
 
-  Widget _buildFormCard() {
-    return Container(
-      padding: const EdgeInsets.fromLTRB(28, 30, 28, 26),
-      decoration: BoxDecoration(
-        color: Colors.white.withValues(alpha: 0.94),
-        borderRadius: BorderRadius.circular(24),
-        border: Border.all(color: Colors.white),
-        boxShadow: const [
-          BoxShadow(
-            color: Color(0x18087F73),
-            blurRadius: 26,
-            offset: Offset(0, 12),
-          ),
-        ],
-      ),
-      child: Form(
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            _buildBrandHeader(),
-            const SizedBox(height: 30),
-            Text(
-              _isSignUp ? 'Create your account' : 'Welcome back',
-              style: const TextStyle(
-                fontSize: 28,
-                fontWeight: FontWeight.w800,
-                color: Color(0xFF153B39),
-              ),
-            ),
-            const SizedBox(height: 7),
-            Text(
-              _isSignUp
-                  ? 'Start learning FSL today.'
-                  : 'Sign in to continue your lessons.',
-              style: const TextStyle(color: Color(0xFF64807C), fontSize: 14),
-            ),
-            const SizedBox(height: 26),
-
-            // Name field (sign up only)
-            if (_isSignUp) ...[
-              _buildField(
-                controller: _nameController,
-                label: 'Username',
-                icon: Icons.person_outline_rounded,
-                validator: (value) {
-                  if (value == null || value.trim().isEmpty) return 'Enter your username';
-                  if (value.trim().length > 30) return 'Username must be 30 characters or fewer';
-                  return null;
-                },
-                maxLength: 30,
-              ),
-              const SizedBox(height: 14),
-            ],
-
-            // Email field
-            _buildField(
-              controller: _emailController,
-              label: 'Email address',
-              icon: Icons.mail_outline_rounded,
-              keyboardType: TextInputType.emailAddress,
-              validator: (value) =>
-                  value == null || !value.contains('@') ? 'Enter a valid email' : null,
-               maxLength: 256,
-            ),
-            const SizedBox(height: 14),
-
-            // Password field
-            _buildField(
-              controller: _passwordController,
-              label: 'Password',
-              icon: Icons.lock_outline_rounded,
-              obscureText: _obscurePassword,
-              suffix: IconButton(
-                onPressed: () => setState(() => _obscurePassword = !_obscurePassword),
-                icon: Icon(_obscurePassword ? Icons.visibility_outlined : Icons.visibility_off_outlined),
-              ),
-              validator: passwordValidationMessage,
-              maxLength: 30,
-            ),
-
-            if (!_isSignUp) ...[
-              const SizedBox(height: 8),
-              Align(
-                alignment: Alignment.centerRight,
-                child: TextButton(
-                  onPressed: _isLoading ? null : _forgotPassword,
-                  child: const Text('Forgot password?'),
-                ),
-              ),
-            ],
-            const SizedBox(height: 14),
-
-            const SizedBox(height: 8),
-
-            // Primary action button - grayed out until agreed
-            SizedBox(
-              width: double.infinity,
-              height: 54,
-              child: FilledButton(
-                onPressed: _isLoading || _isLockedOut 
-                    ? null
-                    : (_isSignUp ? _signUp : _action == AuthAction.signInWithPassword ? _signInWithPassword : _signInWithCode),
-                style: FilledButton.styleFrom(
-                  backgroundColor: _isLockedOut ? Colors.grey : const Color(0xFF087F73),
-                  foregroundColor: _isLockedOut ? Colors.white70 : Colors.white,
-                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
-                ),
-                child: _isLoading
-                    ? const SizedBox(
-                        width: 22,
-                        height: 22,
-                        child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white),
-                      )
-                    : Text(
-                        _isSignUp ? 'Create account' : _action == AuthAction.signInWithPassword ? 'Sign in' : 'Sign in OTP',
-                        style: const TextStyle(fontSize: 15, fontWeight: FontWeight.w700),
-                      ),
-              ),
-            ),
-
-            const SizedBox(height: 12),
-
-            // TEST BUILDS ONLY: skip login to test Practice/Quiz. Shown in debug
-            // builds, or release builds made with --dart-define=FILOSIGN_TEST=true.
-            if (kDebugMode || const bool.fromEnvironment('FILOSIGN_TEST'))
-              Center(
-                child: TextButton(
-                  onPressed: () => Navigator.pushAndRemoveUntil(
-                    context,
-                    MaterialPageRoute(builder: (_) => const HomePage()),
-                    (route) => false,
-                  ),
-                  child: const Text('Skip login (debug build only)'),
-                ),
-              ),
-
-            // Alternative sign-in options - show based on action
-if (!_isSignUp) ...[
-  if (_action == AuthAction.signInWithPassword)
-    Center(
-      child: TextButton(
-        onPressed: _isLoading || _isLockedOut ? null : _signInWithCode,
-        child: const Text('Sign in with email code instead'),
-      ),
-    ),
-  if (_action == AuthAction.signInWithCode)
-    Center(
-      child: TextButton(
-        onPressed: _isLoading || _isLockedOut ? null : _signInWithPassword,
-        child: const Text('Sign in with password'),
-      ),
-    ),
-],
-
-            const SizedBox(height: 20),
-            Row(
-              children: [
-                const Expanded(child: Divider(color: Color(0xFFD7E5E2))),
-                Padding(
-                  padding: const EdgeInsets.symmetric(horizontal: 12),
-                  child: Text('or', style: TextStyle(color: Color(0xFF8BA09D), fontSize: 12)),
-                ),
-                const Expanded(child: Divider(color: Color(0xFFD7E5E2))),
-              ],
-            ),
-            const SizedBox(height: 18),
-            Center(
-              child: Wrap(
-                alignment: WrapAlignment.center,
-                children: [
-                  Text(
-                    _isSignUp ? 'Already have an account? ' : 'New to Filosign? ',
-                    style: const TextStyle(color: Color(0xFF64807C), fontSize: 13),
-                  ),
-                  GestureDetector(
-                    onTap: _isLoading
-                        ? null
-                        : () => setState(() {
-                              _isSignUp = !_isSignUp;
-                              _action = AuthAction.signInWithPassword;
-                              _passwordController.clear();
-                              _emailController.clear();
-                              _nameController.clear();
-                            }),
-                    child: Text(
-                      _isSignUp ? 'Sign in' : 'Create one',
-                      style: const TextStyle(color: Color(0xFFF07932), fontWeight: FontWeight.w800, fontSize: 13),
-                    ),
-                  ),
-                ],
-              ),
-            ),
-            const SizedBox(height: 20),
-          ],
-        ),
-      ),
-    );
-  }
-
-  bool _obscurePassword = true;
-
-  @override
-  Widget build(BuildContext context) {
-    return Scaffold(
-      body: Container(
-        decoration: const BoxDecoration(
-          gradient: LinearGradient(
-            colors: [Color(0xFFF7FFFD), Color(0xFFE6F8F4), Color(0xFFFFF4E8)],
-            begin: Alignment.topLeft,
-            end: Alignment.bottomRight,
-          ),
-        ),
-        child: SafeArea(
-          child: LayoutBuilder(
-            builder: (context, constraints) {
-              final isWide = constraints.maxWidth >= 800;
-              return SingleChildScrollView(
-                padding: EdgeInsets.symmetric(
-                  horizontal: isWide ? 56 : 22,
-                  vertical: isWide ? 44 : 24,
-                ),
-                child: ConstrainedBox(
-                  constraints: const BoxConstraints(maxWidth: 1120),
-                  child: _buildFormCard(),
-                ),
-              );
-            },
-          ),
-        ),
-      ),
-    );
-  }
-Widget _buildField({
+  Widget _buildField({
     required TextEditingController controller,
     required String label,
     required IconData icon,
@@ -637,6 +462,352 @@ Widget _buildField({
           vertical: 17,
         ),
         errorMaxLines: 3,
+      ),
+    );
+  }
+
+  Widget _buildFormCard() {
+    return Container(
+      padding: const EdgeInsets.fromLTRB(28, 30, 28, 26),
+      decoration: BoxDecoration(
+        color: Colors.white.withValues(alpha: 0.94),
+        borderRadius: BorderRadius.circular(24),
+        border: Border.all(color: Colors.white),
+        boxShadow: const [
+          BoxShadow(
+            color: Color(0x18087F73),
+            blurRadius: 26,
+            offset: Offset(0, 12),
+          ),
+        ],
+      ),
+      child: Form(
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            _buildBrandHeader(),
+            const SizedBox(height: 30),
+            Text(
+              _isSignUp ? 'Create your account' : 'Welcome back',
+              style: TextStyle(
+                fontSize: 28,
+                fontWeight: FontWeight.w800,
+                color: Color(0xFF153B39),
+              ),
+            ),
+            const SizedBox(height: 7),
+            Text(
+              _isSignUp
+                  ? ' Start learning FSL today.'
+                  : ' Sign in to continue your lessons.',
+              style: TextStyle(color: Color(0xFF64807C), fontSize: 14),
+            ),
+            const SizedBox(height: 26),
+
+            // Name field (sign up only)
+            if (_isSignUp) ...[
+              _buildField(
+                controller: _nameController,
+                label: 'Username',
+                icon: Icons.person_outline_rounded,
+                validator: (value) {
+                  if (value == null || value.trim().isEmpty) return 'Enter your username';
+                  if (value.trim().length > 30) return 'Username must be 30 characters or fewer';
+                  return null;
+                },
+                maxLength: 30,
+              ),
+              const SizedBox(height: 14),
+            ],
+
+            // Email field
+            _buildField(
+              controller: _emailController,
+              label: 'Email address',
+              icon: Icons.mail_outline_rounded,
+              keyboardType: TextInputType.emailAddress,
+              validator: (value) =>
+                  value == null || !value.contains('@') ? 'Enter a valid email' : null,
+              maxLength: 256,
+            ),
+            const SizedBox(height: 14),
+
+            // Password field
+            _buildField(
+              controller: _passwordController,
+              label: 'Password',
+              icon: Icons.lock_outline_rounded,
+              obscureText: _obscurePassword,
+              suffix: IconButton(
+                onPressed: () => setState(() => _obscurePassword = !_obscurePassword),
+                icon: Icon(_obscurePassword ? Icons.visibility_outlined : Icons.visibility_off_outlined),
+              ),
+              validator: passwordValidationMessage,
+              maxLength: 30,
+            ),
+            if (!_isSignUp) ...[
+              const SizedBox(height: 8),
+              Align(
+                alignment: Alignment.centerRight,
+                child: TextButton(
+                  onPressed: (_isLoading || _isLockedOut) ? null : _forgotPassword,
+                  child: const Text('Forgot password?'),
+                ),
+              ),
+            ],
+
+            if (_isSignUp) ...[
+              const SizedBox(height: 14),
+
+              // Terms and Conditions acceptance row
+              Row(
+                children: [
+                 Checkbox(
+                  value: _acceptedTerms,
+                  onChanged: null, 
+                  fillColor: WidgetStateProperty.resolveWith((_) {
+                    return _acceptedTerms
+                        ? const Color(0xFF087F73)   
+                        : Colors.transparent;       
+                  }),
+                  checkColor: const Color(0xFFFFFFFF),
+                  side: BorderSide(
+                    color: _acceptedTerms
+                        ? const Color(0xFF087F73)
+                        : const Color(0xFFB7C9C6),   
+                    width: 1.6,
+                  ),
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(4),
+                  ),
+                ),
+                  Expanded(
+                    child: Wrap(
+                      children: [
+                        Text(
+                          'I have read and agree to the ',
+                          style: TextStyle(color: Color(0xFF64807C), fontSize: 13),
+                        ),
+                        GestureDetector(
+                          onTap: _openTerms,
+                          child: Text(
+                            'Terms and Conditions',
+                            style: TextStyle(
+                              color: Color(0xFF087F73),
+                              fontWeight: FontWeight.w700,
+                              decoration: TextDecoration.underline,
+                            ),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 12),
+
+              // Privacy Policy acceptance row
+              Row(
+                children: [
+                 Checkbox(
+                    value: _acceptedPrivacy,
+                    onChanged: null, // ← never user-editable, ever
+                    fillColor: WidgetStateProperty.resolveWith((_) {
+                      return _acceptedPrivacy
+                          ? const Color(0xFF087F73)   // teal when agreed
+                          : Colors.transparent;        // empty otherwise
+                    }),
+                    checkColor: const Color(0xFFFFFFFF),
+                    side: BorderSide(
+                      color: _acceptedTerms
+                          ? const Color(0xFF087F73)
+                          : const Color(0xFFB7C9C6),   // muted gray outline when not agreed
+                      width: 1.6,
+                    ),
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(4),
+                    ),
+                  ),
+                  Expanded(
+                    child: Wrap(
+                      children: [
+                        Text(
+                          'I have read and agree to the ',
+                          style: TextStyle(color: Color(0xFF64807C), fontSize: 13),
+                        ),
+                        GestureDetector(
+                          onTap: _openPrivacy,
+                          child: Text(
+                            'Privacy Policy',
+                            style: TextStyle(
+                              color: Color(0xFF087F73),
+                              fontWeight: FontWeight.w700,
+                              decoration: TextDecoration.underline,
+                            ),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ],
+              ),
+            ],
+
+            const SizedBox(height: 14),
+
+            // Primary action button - greyed out only when relevant to the
+            // current screen (sign-up: checkboxes, sign-in: lockout).
+            SizedBox(
+              width: double.infinity,
+              height: 54,
+              child: FilledButton(
+                onPressed: (_isLoading || _primaryButtonDisabled)
+                    ? null
+                    : (_isSignUp
+                        ? _signUp
+                        : _action == AuthAction.signInWithPassword
+                            ? _signInWithPassword
+                            : _signInWithCode),
+                style: FilledButton.styleFrom(
+                  backgroundColor: _primaryButtonDisabled
+                      ? Colors.grey
+                      : const Color(0xFF087F73),
+                  foregroundColor: _primaryButtonDisabled
+                      ? Colors.white70
+                      : Colors.white,
+                  shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(14)),
+                ),
+                child: _isLoading
+                    ? const SizedBox(
+                        width: 22,
+                        height: 22,
+                        child: CircularProgressIndicator(
+                            strokeWidth: 2, color: Colors.white),
+                      )
+                    : Text(
+                        _isSignUp
+                            ? 'Create account'
+                            : _action == AuthAction.signInWithPassword
+                                ? 'Sign in'
+                                : 'Sign in OTP',
+                        style: TextStyle(
+                            fontSize: 15, fontWeight: FontWeight.w700),
+                      ),
+              ),
+            ),
+
+            const SizedBox(height: 12),
+
+            // TEST BUILDS ONLY: skip login to test Practice/Quiz. Shown in debug
+            // builds, or release builds made with --dart-define=FILOSIGN_TEST=true.
+            if (kDebugMode || const bool.fromEnvironment('FILOSIGN_TEST'))
+              Center(
+                child: TextButton(
+                  onPressed: () => Navigator.pushAndRemoveUntil(
+                    context,
+                    MaterialPageRoute(builder: (_) => const HomePage()),
+                    (route) => false,
+                  ),
+                  child: const Text('Skip login (test build only)'),
+                ),
+              ),
+
+            // Alternative sign-in options - show based on action
+            if (!_isSignUp) ...[
+              if (_action == AuthAction.signInWithPassword)
+                Center(
+                  child: TextButton(
+                    onPressed: _isLoading || _isLockedOut ? null : _signInWithCode,
+                    child: const Text('Sign in with email code instead'),
+                  ),
+                ),
+              if (_action == AuthAction.signInWithCode)
+                Center(
+                  child: TextButton(
+                    onPressed: _isLoading || _isLockedOut ? null : _signInWithPassword,
+                    child: const Text('Sign in with password'),
+                  ),
+                ),
+            ],
+
+            const SizedBox(height: 20),
+            Row(
+              children: [
+                const Expanded(child: Divider(color: Color(0xFFD7E5E2))),
+                Padding(
+                  padding: const EdgeInsets.symmetric(horizontal: 12),
+                  child: Text('or', style: TextStyle(color: Color(0xFF8BA09D), fontSize: 12)),
+                ),
+                const Expanded(child: Divider(color: Color(0xFFD7E5E2))),
+              ],
+            ),
+            const SizedBox(height: 18),
+            Center(
+              child: Wrap(
+                alignment: WrapAlignment.center,
+                children: [
+                  Text(
+                    _isSignUp ? 'Already have an account? ' : 'New to Filosign? ',
+                    style: TextStyle(color: Color(0xFF64807C), fontSize: 13),
+                  ),
+                  GestureDetector(
+                    onTap: _isLoading
+                        ? null
+                        : () => setState(() {
+                              _isSignUp = !_isSignUp;
+                              _action = AuthAction.signInWithPassword;
+                              _acceptedTerms = false;
+                              _acceptedPrivacy = false;
+                              _passwordController.clear();
+                              _emailController.clear();
+                              _nameController.clear();
+                            }),
+                    child: Text(
+                      _isSignUp ? 'Sign in' : 'Create one',
+                      style: TextStyle(color: Color(0xFFF07932), fontWeight: FontWeight.w800, fontSize: 13),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            const SizedBox(height: 20),
+          ],
+        ),
+      ),
+    );
+  }
+
+  bool _obscurePassword = true;
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      body: Container(
+        decoration: const BoxDecoration(
+          gradient: LinearGradient(
+            colors: [Color(0xFFF7FFFD), Color(0xFFE6F8F4), Color(0xFFFFF4E8)],
+            begin: Alignment.topLeft,
+            end: Alignment.bottomRight,
+          ),
+        ),
+        child: SafeArea(
+          child: LayoutBuilder(
+            builder: (context, constraints) {
+              final isWide = constraints.maxWidth >= 800;
+              return SingleChildScrollView(
+                padding: EdgeInsets.symmetric(
+                  horizontal: isWide ? 56 : 22,
+                  vertical: isWide ? 44 : 24,
+                ),
+                child: ConstrainedBox(
+                  constraints: const BoxConstraints(maxWidth: 1120),
+                  child: _buildFormCard(),
+                ),
+              );
+            },
+          ),
+        ),
       ),
     );
   }
