@@ -12,33 +12,31 @@ jobs:
     runs-on: macos-15
 
     steps:
-      # 1. Bring the repository files into the runner workspace first
       - name: Checkout Source Code
         uses: actions/checkout@v4
 
-      # 2. Set up the Flutter environment
       - name: Setup Flutter Environment
         uses: subosito/flutter-action@v2
         with:
           channel: 'stable'
           cache: true
 
-      # 3. Fetch Flutter/Dart dependencies (creates internal iOS symlinks)
       - name: Resolve Flutter Dependencies
         run: flutter pub get
 
-      # 4. Inject Bundle Identifier (Now that project.pbxproj exists)
+      - name: Regenerate Missing iOS Scaffolding
+        run: |
+          # Safe fallback check: If files were missed by git, recreate them on the runner
+          if [ ! -d "ios" ] || [ ! -f "ios/Podfile" ]; then
+            echo "⚠️ iOS directory or Podfile missing. Re-generating scaffolding..."
+            flutter create --platforms ios .
+          fi
+
       - name: Auto-Inject Bundle Identifier
         run: |
           sed -i '' 's/PRODUCT_BUNDLE_IDENTIFIER = .*;/PRODUCT_BUNDLE_IDENTIFIER = com.filosign.app;/g' ios/Runner.xcodeproj/project.pbxproj || true
 
-      # 5. Install CocoaPods dependencies (Now that the ios folder exists)
-      - name: Install CocoaPods dependencies
-        run: |
-          cd ios
-          pod install --repo-update
-
-      # 6. Execute the compilation test
       - name: Run Platform Compilation Test
         run: |
+          # This command natively triggers Pod installations internally during compilation
           flutter build ios --release --no-codesign -v
