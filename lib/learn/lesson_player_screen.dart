@@ -2,6 +2,7 @@ import 'dart:async';
 
 import 'package:flutter/material.dart';
 import 'package:video_player/video_player.dart';
+import 'package:supabase_flutter/supabase_flutter.dart';
 import 'lesson.dart';
 
 class LessonPlayerScreen extends StatefulWidget {
@@ -26,6 +27,9 @@ class _LessonPlayerScreenState extends State<LessonPlayerScreen> {
   bool _initialized = false;
   bool _showControls = true;
   Timer? _hideControlsTimer;
+  
+  // <--- ADDED: Flag to prevent multiple saves when video ends
+  bool _hasSavedCurrentLesson = false; 
 
   @override
   void initState() {
@@ -37,6 +41,9 @@ class _LessonPlayerScreenState extends State<LessonPlayerScreen> {
   Future<void> _initController(Lesson lesson) async {
     _controller?.removeListener(_onVideoUpdate);
     await _controller?.dispose();
+
+    // <--- ADDED: Reset the save flag whenever a new video is initialized
+    _hasSavedCurrentLesson = false;
 
     if (lesson.videoAsset == null || lesson.videoAsset!.isEmpty) {
       if (mounted) setState(() => _initialized = false);
@@ -59,8 +66,46 @@ class _LessonPlayerScreenState extends State<LessonPlayerScreen> {
 
   void _onVideoUpdate() {
     if (_controller == null) return;
+
+    // <--- ADDED: Check if the video has finished playing
+    final isFinished = _controller!.value.position >= _controller!.value.duration &&
+        _controller!.value.duration > Duration.zero;
+
+    if (isFinished && !_hasSavedCurrentLesson) {
+      _hasSavedCurrentLesson = true; // Mark as saved
+      _saveCurrentLesson(widget.lessons[_currentIndex]);
+    }
+
     if (_controller!.value.isPlaying && _showControls) {
       _startHideControlsTimer();
+    }
+  }
+
+  Future<void> _saveCurrentLesson(Lesson lesson) async {
+    try {
+      final RegExp regExp = RegExp(r'(\d+)\.mp4$');
+      final match = regExp.firstMatch(lesson.videoAsset ?? '');
+      
+      if (match == null) {
+        debugPrint('Could not parse video ID from asset: ${lesson.videoAsset}');
+        return; 
+      }
+
+      final videoId = int.tryParse(match.group(1)!);
+      
+      if (videoId == null) {
+        debugPrint('Parsed video ID is not a valid integer: ${match.group(1)}');
+        return;
+      }
+      await Supabase.instance.client.rpc(
+        'save_current_video',
+        params: {
+          'p_video_id': videoId, 
+        },
+      );
+      debugPrint('Successfully saved current lesson for video ID: $videoId');
+    } catch (e) {
+      debugPrint('Error saving current lesson: $e');
     }
   }
 

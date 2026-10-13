@@ -584,9 +584,9 @@
       final user = Supabase.instance.client.auth.currentUser;
       if (user == null) return;
       try {
-        await Supabase.instance.client.auth.updateUser(
-          UserAttributes(nonce: otpNonce),
-        );
+        final res = await Supabase.instance.client.functions.invoke('delete-account');
+        if (res.status != 200) throw Exception(res.data);
+        
         await Supabase.instance.client.auth.signOut();
         Navigator.of(context).pushAndRemoveUntil(
           MaterialPageRoute(builder: (_) => auth.AuthPage()),
