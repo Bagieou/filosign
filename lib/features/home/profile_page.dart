@@ -1,4 +1,4 @@
-import 'package:firebase_auth/firebase_auth.dart';
+import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:flutter/material.dart';
 
 class ProfilePage extends StatelessWidget {
@@ -6,21 +6,22 @@ class ProfilePage extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final user = FirebaseAuth.instance.currentUser;
-    final profileName = user?.displayName?.trim().isNotEmpty == true
-        ? user!.displayName!.trim()
-        : 'FSL Learner';
+    final user = Supabase.instance.client.auth.currentUser;
+    final metadataName = (user?.userMetadata?['display_name'] as String?)?.trim();
+    final String profileName = metadataName != null && metadataName.isNotEmpty
+        ? metadataName
+        : (user?.email?.split('@').first ?? '');
 
     return _buildSecondaryPage(
       icon: Icons.person_rounded,
-      title: 'Profile',
+      title: 'Profile',   
       child: Column(
         children: [
           CircleAvatar(
             radius: 38,
             backgroundColor: const Color(0xFFFFE1C8),
             child: Text(
-              profileName.substring(0, 1).toUpperCase(),
+              profileName.isNotEmpty ? profileName.substring(0, 1) : '',
               style: const TextStyle(
                 color: Color(0xFFC45E22),
                 fontSize: 28,
@@ -39,7 +40,7 @@ class ProfilePage extends StatelessWidget {
           ),
           const SizedBox(height: 5),
           Text(
-            user?.email ?? '',
+            user?.email ?? 'No email',
             style: const TextStyle(color: Color(0xFF6B8581)),
           ),
           const SizedBox(height: 30),

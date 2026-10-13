@@ -6,17 +6,17 @@ class LearnScreen extends StatelessWidget {
 
   static String _categoryIdForTitle(String title) {
     const map = {
+      'Basics': 'basic',
       'Letters': 'letters',
+      'Greetings': 'greetings',
       'Numbers': 'numbers',
       'Days': 'days',
-      'Months': 'calendar',
+      'Months': 'months',
       'Colors': 'colors',
-      'Greetings': 'greetings',
       'Family': 'family',
-      'Relationships': 'relationships',
       'Food': 'food',
       'Drinks': 'drinks',
-      'Survival': 'survival',
+      'Communication': 'communication',
     };
     return map[title] ?? title.toLowerCase();
   }
@@ -68,17 +68,17 @@ class LearnScreen extends StatelessWidget {
   }
 
   static const List<_LearnCategory> _categories = [
+    _LearnCategory('Basics', Icons.people_outline, 5),
     _LearnCategory('Letters', Icons.abc_outlined, 26),
     _LearnCategory('Numbers', Icons.numbers_outlined, 10),
     _LearnCategory('Days', Icons.calendar_today_outlined, 10),
     _LearnCategory('Months', Icons.date_range_outlined, 12),
     _LearnCategory('Colors', Icons.palette_outlined, 13),
     _LearnCategory('Greetings', Icons.waving_hand_outlined, 10),
-    _LearnCategory('Family', Icons.family_restroom_outlined, 10),
-    _LearnCategory('Relationships', Icons.people_outline, 10),
+    _LearnCategory('Family', Icons.family_restroom_outlined, 15),
     _LearnCategory('Food', Icons.restaurant_outlined, 10),
     _LearnCategory('Drinks', Icons.local_drink_outlined, 10),
-    _LearnCategory('Survival', Icons.emergency_outlined, 10),
+    _LearnCategory('Communication', Icons.emergency_outlined, 10),
   ];
 }
 

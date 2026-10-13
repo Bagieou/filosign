@@ -1,0 +1,23 @@
+{
+  "version": 4,
+  "sequence_length": 30,
+  "heads": {
+    "letters": {
+      "features": 116
+    },
+    "words": {
+      "features": 304
+    }
+  },
+  "one_euro": {
+    "min_cutoff": 3.0,
+    "beta": 1.0,
+    "d_cutoff": 1.0
+  },
+  "canonical": {
+    "letterbox": "S=max(W,H); X=(x-.5)*W/S+.5; Y=(y-.5)*H/S+.5; Z=z*W/S",
+    "reflect_when": "dominant hand appears as a left hand (user setting in the app)",
+    "slots": "slot0 = dominant hand, slot1 = other hand"
+  },
+  "normalization": "baked into the model (Normalization layer); feed raw features"
+}
