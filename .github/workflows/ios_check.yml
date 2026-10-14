@@ -26,7 +26,6 @@ jobs:
 
       - name: Regenerate Missing iOS Scaffolding
         run: |
-          # Safe fallback check: If files were missed by git, recreate them on the runner
           if [ ! -d "ios" ] || [ ! -f "ios/Podfile" ]; then
             echo "⚠️ iOS directory or Podfile missing. Re-generating scaffolding..."
             flutter create --platforms ios .
@@ -38,14 +37,19 @@ jobs:
 
       - name: Run Platform Compilation Test
         run: |
-          # Compiles the workspace and creates an unsigned .ipa package bundle
-          flutter build ipa --release --no-codesign -v
+          # Use ios --config-only to prep cocoa pods, then build with explicit signing overrides
+          flutter build ios --release --no-codesign --no-pub
+
+      - name: Manually Package App Payload
+        run: |
+          # Create a standard payload structure that Windows tools can read instantly
+          mkdir -p Payload
+          cp -r build/ios/iphoneos/Runner.app Payload/
+          zip -r app-release.ipa Payload/
 
       - name: Upload IPA Artifact to GitHub
         uses: actions/upload-artifact@v4
         with:
           name: Unsigned-iOS-App
-          path: |
-            build/ios/ipa/*.ipa
-            build/ios/iphoneos/*.app
+          path: app-release.ipa
           retention-days: 7
