@@ -3,6 +3,7 @@ import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
 import 'package:video_player/video_player.dart';
+import 'package:supabase_flutter/supabase_flutter.dart';
 
 import '../../learn/category.dart';
 import '../../learn/lesson.dart';
@@ -10,6 +11,7 @@ import '../../recognizer/sign_labels.dart';
 import '../practice/live_practice_screen.dart' show FeedbackBanner, Top3Panel;
 import '../practice/live_sign_view.dart';
 import 'package:filosign/widgets/celebration_overlay.dart';
+import 'package:filosign/learn/learn_routes.dart';
 
 const _teal = Color(0xFF087F73);
 const _ink = Color(0xFF153B39);
@@ -33,7 +35,7 @@ class QuizResult {
   bool get passed => score * 100 >= total * 90;
 }
 
-/// 10-question quiz for one category. Questions randomly mix a Live Camera
+/// 10-question fquiz for one category. Questions randomly mix a Live Camera
 /// Challenge (sign it, matched at >= 85% within the time limit) and Video
 /// Identification (watch, pick 1 of 4). Green = correct (+1 point),
 /// red = incorrect with a reference-video hint pop-up.
@@ -56,6 +58,8 @@ class _QuizScreenState extends State<QuizScreen> {
   String? _answerText; // what the user signed / picked
   Lesson? _picked;
   bool _celebrating = false;
+  bool _saving = false;
+  bool _saveFailed = false;
   bool get _passed => _score * 100 >= _questions.length * 90; // >= 90%
 
   @override
@@ -110,35 +114,103 @@ class _QuizScreenState extends State<QuizScreen> {
     }
   }
 
-  void _next() => setState(() {
+  void _next() {
+    final finishing = _index + 1 >= _questions.length;
+    setState(() {
       _index++;
       _correct = null;
       _answerText = null;
       _picked = null;
-      if (_index >= _questions.length && _passed) {
-        _celebrating = true;
-        // TODO: save the score to Supabase here, before the overlay starts.
-      }
     });
+    if (finishing) _submitScore();
+  }
 
   void _restart() => setState(() {
-      _questions = _buildQuestions();
-      _index = 0;
-      _score = 0;
-      _correct = null;
-      _answerText = null;
-      _picked = null;
-      _celebrating = false;
+        _questions = _buildQuestions();
+        _index = 0;
+        _score = 0;
+        _correct = null;
+        _answerText = null;
+        _picked = null;
+        _celebrating = false;
+        _saving = false;
+        _saveFailed = false;
+      });
+
+  void _showMessage(String message, {bool isError = false}) {
+    if (!mounted) return;
+    ScaffoldMessenger.of(context)
+      ..hideCurrentSnackBar()
+      ..showSnackBar(
+        SnackBar(
+          content: Text(message),
+          behavior: SnackBarBehavior.floating,
+          backgroundColor:
+              isError ? const Color(0xFFB42318) : const Color(0xFF087F73),
+        ),
+      );
+  }
+
+  /// Saves the score first; the celebration only starts once it is stored, so
+  /// the unlock never depends on the 5-second overlay finishing.
+  Future<void> _submitScore() async {
+    final user = Supabase.instance.client.auth.currentUser;
+    if (user == null) {
+      _showMessage('Sign in to save your score.', isError: true);
+      return;
+    }
+
+    setState(() {
+      _saving = true;
+      _saveFailed = false;
     });
+
+    try {
+      await Supabase.instance.client.rpc('submit_quiz', params: {
+        'p_category_id': widget.category.id,
+        'p_score': _score,
+      });
+      if (!mounted) return;
+      setState(() {
+        _saving = false;
+        _celebrating = _passed;
+      });
+    } on AuthException catch (e) {
+      _saveError('Auth error: ${e.code ?? 'unknown'}');
+    } catch (_) {
+      _saveError('Could not submit quiz score. Please try again.');
+    }
+  }
+
+  void _saveError(String message) {
+    if (!mounted) return;
+    setState(() {
+      _saving = false;
+      _saveFailed = true;
+    });
+    _showMessage(message, isError: true);
+  }
+
+  /// Back to the Learn screen: pops everything above CategoryDetailScreen, then
+  /// CategoryDetailScreen itself, so LearnScreen's `await Navigator.push`
+  /// resumes and checks for newly unlocked categories.
   void _finishQuiz() {
     if (!mounted) return;
-    Navigator.pop(
-      context,
-      QuizResult(
-          categoryId: widget.category.id,
-          score: _score,
-          total: _questions.length),
-    );
+    final nav = Navigator.of(context);
+    final result = QuizResult(
+        categoryId: widget.category.id,
+        score: _score,
+        total: _questions.length);
+
+    var foundDetail = false;
+    nav.popUntil((r) {
+      if (r.settings.name == kCategoryDetailRoute) {
+        foundDetail = true;
+        return true;
+      }
+      return r.isFirst; // safety: never pop past the root
+    });
+    if (foundDetail) nav.pop(result);
   }
 
   Future<void> _showHint(Lesson lesson) => showDialog<void>(
@@ -277,38 +349,66 @@ class _QuizScreenState extends State<QuizScreen> {
 
   Widget _summary() {
     final pct = (_score / _questions.length * 100).round();
-    return Center(
-      child: Padding(
-        padding: const EdgeInsets.all(28),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Icon(pct >= 70 ? Icons.emoji_events_rounded : Icons.school_rounded,
-                size: 72, color: pct >= 70 ? const Color(0xFFE8782F) : _teal),
-            const SizedBox(height: 12),
-            Text('$_score / ${_questions.length}',
-                style: const TextStyle(color: _ink, fontSize: 40, fontWeight: FontWeight.w800)),
-            Text('$pct% correct', style: const TextStyle(color: _muted, fontSize: 15)),
-            const SizedBox(height: 24),
-            SizedBox(
-              width: double.infinity,
-              height: 52,
-              child: FilledButton(
-                onPressed: _restart,
-                style: FilledButton.styleFrom(
-                  backgroundColor: _teal,
-                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
-                ),
-                child: const Text('Try again', style: TextStyle(fontWeight: FontWeight.w700)),
-              ),
+    return Center (
+    child: Padding(
+      padding: const EdgeInsets.all(28),
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(pct >= 70 ? Icons.emoji_events_rounded : Icons.school_rounded,
+              size: 72, color: pct >= 70 ? const Color(0xFFE8782F) : _teal),
+          const SizedBox(height: 12),
+          Text('$_score / ${_questions.length}',
+              style: const TextStyle(
+                  color: _ink, fontSize: 40, fontWeight: FontWeight.w800)),
+          Text('$pct% correct',
+              style: const TextStyle(color: _muted, fontSize: 15)),
+          const SizedBox(height: 16),
+          if (_saving)
+            const Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                SizedBox(
+                    width: 16,
+                    height: 16,
+                    child: CircularProgressIndicator(
+                        strokeWidth: 2, color: _teal)),
+                SizedBox(width: 10),
+                Text('Saving your score…',
+                    style: TextStyle(color: _muted, fontSize: 13)),
+              ],
             ),
-            const SizedBox(height: 10),
-            TextButton(onPressed: () => Navigator.pop(context), child: const Text('Back to quizzes')),
-          ],
-        ),
+            if (_saveFailed)
+            OutlinedButton.icon(
+              onPressed: _submitScore,
+              icon: const Icon(Icons.refresh_rounded),
+              label: const Text('Retry saving score'),
+              style: OutlinedButton.styleFrom(foregroundColor: _teal),
+            ),
+            const SizedBox(height: 24),
+          SizedBox(
+            width: double.infinity,
+            height: 52,
+            child: FilledButton(
+              onPressed: _saving ? null : _restart,
+              style: FilledButton.styleFrom(
+                backgroundColor: _teal,
+                shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(14)),
+              ),
+              child: const Text('Try again',
+                  style: TextStyle(fontWeight: FontWeight.w700)),
+            ),
+          ),
+          const SizedBox(height: 10),
+          TextButton(
+              onPressed: _saving ? null : () => Navigator.pop(context),
+              child: const Text('Back to quizzes')),
+        ],
       ),
-    );
-  }
+    ),
+  );
+}
 }
 
 /// Live Camera Challenge: sign [lesson] within [seconds]. Correct when the

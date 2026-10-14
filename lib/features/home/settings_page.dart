@@ -301,8 +301,10 @@
                   TextFormField(
                     controller: emailController,
                     keyboardType: TextInputType.emailAddress,
+                    maxLength: 256,
                     decoration: const InputDecoration(
                       labelText: 'New email address',
+                      counterText: '',
                     ),
                     validator: (value) {
                       if (value == null || value.trim().isEmpty) {
@@ -408,8 +410,10 @@
                   TextFormField(
                     controller: newPasswordController,
                     obscureText: obscureNewPassword,
+                    maxLength: 30,
                     decoration: InputDecoration(
                       labelText: 'New password',
+                      counterText: '',
                       suffixIcon: IconButton(
                         icon: Icon(obscureNewPassword ? Icons.visibility_outlined : Icons.visibility_off_outlined),
                         onPressed: () => setDialogState(() => obscureNewPassword = !obscureNewPassword),
@@ -430,8 +434,10 @@
                   TextFormField(
                     controller: confirmPasswordController,
                     obscureText: obscureConfirmPassword,
+                    maxLength: 30,
                     decoration: InputDecoration(
                       labelText: 'Confirm new password',
+                      counterText: '',
                       suffixIcon: IconButton(
                         icon: Icon(obscureConfirmPassword ? Icons.visibility_outlined : Icons.visibility_off_outlined),
                         onPressed: () => setDialogState(() => obscureConfirmPassword = !obscureConfirmPassword),
