@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:filosign/learn/category_detail_screen.dart';
 import 'package:filosign/learn/learn_routes.dart';
@@ -11,7 +12,6 @@ class LearnScreen extends StatefulWidget {
 }
 
 class _LearnScreenState extends State<LearnScreen> {
-  // Order = unlock order. Position passed to the server is index + 1.
   static const List<_LearnCategory> _categories = [
     _LearnCategory('Basics', 'basic', Icons.people_outline, 5),
     _LearnCategory('Letters', 'letters', Icons.abc_outlined, 26),
@@ -26,9 +26,18 @@ class _LearnScreenState extends State<LearnScreen> {
     _LearnCategory('Communication', 'communication', Icons.emergency_outlined, 10),
   ];
 
-  // Everything except Basics starts locked until the server says otherwise.
   Map<String, bool> _access = {'basic': true};
-  bool _loaded = false;
+
+  /// Categories we've seen unlock during this app session. Access is
+  /// monotonic, so once it's true it should never flip back to false — even
+  /// if a later [can_access_category] RPC hiccups.
+  final Set<String> _unlockedThisSession = {};
+
+  String? _justUnlocked;
+
+  final Map<String, GlobalKey> _tileKeys = {
+    for (final c in _categories) c.id: GlobalKey(),
+  };
 
   @override
   void initState() {
@@ -39,33 +48,35 @@ class _LearnScreenState extends State<LearnScreen> {
   Future<void> _load() async {
     final map = await _fetchAll();
     if (!mounted) return;
-    setState(() {
-      _access = map;
-      _loaded = true;
-    });
+    setState(() => _access = map);
   }
 
   Future<Map<String, bool>> _fetchAll() async {
     final results = await Future.wait([
-      for (var i = 0; i < _categories.length; i++) _fetchAccess(i + 1),
+      for (final c in _categories) _fetchAccess(kCategoryDbIds[c.id]!),
     ]);
-    return {
-      for (var i = 0; i < _categories.length; i++) _categories[i].id: results[i],
-    };
+    final merged = <String, bool>{..._access};
+    for (var i = 0; i < _categories.length; i++) {
+      final r = results[i];
+      if (r != null) merged[_categories[i].id] = r;
+    }
+    return merged;
   }
 
-  Future<bool> _fetchAccess(int position) async {
-    if (position == 1) return true; // Basics is always open
+  /// Returns null when the RPC fails — callers should keep their previous
+  /// value instead of treating the failure as "locked."
+  Future<bool?> _fetchAccess(int dbId) async {
+    if (dbId == kCategoryDbIds['basic']) return true;
     final user = Supabase.instance.client.auth.currentUser;
     if (user == null) return false;
     try {
       final result = await Supabase.instance.client.rpc(
         'can_access_category',
-        params: {'p_user': user.id, 'p_category': position},
+        params: {'p_user': user.id, 'p_category': dbId},
       );
       return _asBool(result);
     } catch (_) {
-      return false; // locked on any error
+      return null;
     }
   }
 
@@ -77,33 +88,68 @@ class _LearnScreenState extends State<LearnScreen> {
   }
 
   Future<void> _openCategory(_LearnCategory c) async {
-    // Only diff for unlocks if we knew the state before opening.
-    final before = _loaded ? Map<String, bool>.of(_access) : null;
-
-    await Navigator.push(
-      context,
-      MaterialPageRoute(
-        settings: const RouteSettings(name: kCategoryDetailRoute),
-        builder: (_) => CategoryDetailScreen(categoryId: c.id),
-      ),
-    );
+    QuizResult? result;
+    try {
+      result = await Navigator.push<QuizResult>(
+        context,
+        MaterialPageRoute(
+          settings: const RouteSettings(name: kCategoryDetailRoute),
+          builder: (_) => CategoryDetailScreen(categoryId: c.id),
+        ),
+      );
+    } catch (e) {
+      debugPrint('quiz route returned unexpected value: $e'); // to be removed
+    }
     if (!mounted) return;
 
-    // Back from the category (quiz passed, or the user just went back).
+    final next = (result?.nextUnlocked ?? false) ? _nextCategory(c.id) : null;
+
+    if (next != null) {
+      _unlockedThisSession.add(next.id);
+
+      await Future.delayed(const Duration(milliseconds: 350));
+      if (!mounted) return;
+
+      setState(() {
+        _access = {..._access, next.id: true};
+        _justUnlocked = next.id;
+      });
+
+      final ctx = _tileKeys[next.id]?.currentContext;
+      if (ctx != null) {
+        await Scrollable.ensureVisible(
+          ctx,
+          duration: const Duration(milliseconds: 400),
+          alignment: 0.5,
+          curve: Curves.easeOut,
+        );
+      }
+      if (!mounted) return;
+      HapticFeedback.lightImpact();
+
+      Future.delayed(const Duration(milliseconds: 1600), () {
+        if (mounted) setState(() => _justUnlocked = null);
+      });
+    }
+
+    // Authoritative re-check, but pinned: nothing unlocked this session is
+    // ever downgraded by a stale or failed read.
     final after = await _fetchAll();
     if (!mounted) return;
     setState(() {
-      _access = after;
-      _loaded = true;
+      _access = {
+        ...after,
+        for (final id in _unlockedThisSession) id: true,
+      };
     });
-
-    if (before == null) return;
-    final newly = _categories
-        .where((x) => after[x.id] == true && before[x.id] != true)
-        .toList();
-    if (newly.isNotEmpty) _showUnlocked(newly.first);
   }
 
+  _LearnCategory? _nextCategory(String id) {
+    final i = _categories.indexWhere((x) => x.id == id);
+    if (i < 0 || i + 1 >= _categories.length) return null;
+    return _categories[i + 1];
+  }
+  
   void _showLockedHint(int index) {
     final prev = _categories[index - 1];
     final c = _categories[index];
@@ -117,42 +163,6 @@ class _LearnScreenState extends State<LearnScreen> {
           backgroundColor: const Color(0xFF087F73),
         ),
       );
-  }
-
-  void _showUnlocked(_LearnCategory c) {
-    showDialog<void>(
-      context: context,
-      builder: (dialogContext) => AlertDialog(
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(24)),
-        backgroundColor: Colors.white,
-        icon: const Icon(Icons.lock_open_rounded,
-            color: Color(0xFF087F73), size: 44),
-        title: Text('${c.title} unlocked!',
-            textAlign: TextAlign.center,
-            style: const TextStyle(
-                color: Color(0xFF153B39), fontWeight: FontWeight.w800)),
-        content: Text(
-            'Great work! ${c.totalSigns} new signs are ready for you.',
-            textAlign: TextAlign.center,
-            style: const TextStyle(color: Color(0xFF6B8581))),
-        actionsAlignment: MainAxisAlignment.center,
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(dialogContext),
-            child: const Text('Later'),
-          ),
-          FilledButton(
-            onPressed: () {
-              Navigator.pop(dialogContext);
-              _openCategory(c);
-            },
-            style:
-                FilledButton.styleFrom(backgroundColor: const Color(0xFF087F73)),
-            child: const Text('Start learning'),
-          ),
-        ],
-      ),
-    );
   }
 
   @override
@@ -181,10 +191,16 @@ class _LearnScreenState extends State<LearnScreen> {
                   (_, i) {
                     final c = _categories[i];
                     final open = _access[c.id] ?? false;
-                    return _CategoryTile(
-                      category: c,
-                      canAccess: open,
-                      onTap: open ? () => _openCategory(c) : () => _showLockedHint(i),
+                    return KeyedSubtree(
+                      key: _tileKeys[c.id],
+                      child: _CategoryTile(
+                        category: c,
+                        canAccess: open,
+                        highlight: _justUnlocked == c.id,
+                        onTap: open
+                            ? () => _openCategory(c)
+                            : () => _showLockedHint(i),
+                      ),
                     );
                   },
                   childCount: _categories.length,
@@ -219,61 +235,90 @@ class _CategoryTile extends StatelessWidget {
     required this.category,
     required this.canAccess,
     required this.onTap,
+    this.highlight = false,
   });
   final _LearnCategory category;
   final bool canAccess;
+  final bool highlight;
   final VoidCallback onTap;
 
   @override
   Widget build(BuildContext context) {
-    return Material(
-      color: Colors.transparent,
-      child: InkWell(
-        onTap: onTap,
-        borderRadius: BorderRadius.circular(20),
-        child: Container(
-          decoration: BoxDecoration(
-            color: canAccess ? Colors.white : Colors.grey.shade300,
-            borderRadius: BorderRadius.circular(20),
-            border: Border.all(
-                color: canAccess
-                    ? const Color(0xFFE2EEEB)
-                    : Colors.grey.shade400),
-            boxShadow: canAccess
-                ? const [
-                    BoxShadow(
-                      color: Color(0x14087F73),
-                      blurRadius: 12,
-                      offset: Offset(0, 6),
-                    ),
-                  ]
-                : null,
-          ),
-          padding: const EdgeInsets.all(16),
-          child: Column(
-            mainAxisAlignment: MainAxisAlignment.center,
-            children: [
-              Icon(
-                canAccess ? category.icon : Icons.lock_outline_rounded,
-                size: 36,
-                color: canAccess ? const Color(0xFF087F73) : Colors.grey,
-              ),
-              const SizedBox(height: 10),
-              Text(
-                category.title,
-                textAlign: TextAlign.center,
-                style: TextStyle(
-                  color: canAccess ? const Color(0xFF153B39) : Colors.grey,
-                  fontSize: 16,
-                  fontWeight: FontWeight.w700,
+    final borderColor = highlight
+        ? const Color(0xFF087F73)
+        : (canAccess ? const Color(0xFFE2EEEB) : Colors.grey.shade400);
+
+    final shadows = highlight
+        ? const [
+            BoxShadow(
+              color: Color(0x33087F73),
+              blurRadius: 18,
+              offset: Offset(0, 8),
+            ),
+          ]
+        : (canAccess
+            ? const [
+                BoxShadow(
+                  color: Color(0x14087F73),
+                  blurRadius: 12,
+                  offset: Offset(0, 6),
                 ),
+              ]
+            : null);
+
+    return AnimatedScale(
+      scale: highlight ? 1.06 : 1.0,
+      duration: const Duration(milliseconds: 350),
+      curve: Curves.easeOutBack,
+      child: Material(
+        color: Colors.transparent,
+        child: InkWell(
+          onTap: onTap,
+          borderRadius: BorderRadius.circular(20),
+          child: AnimatedContainer(
+            duration: const Duration(milliseconds: 350),
+            curve: Curves.easeOut,
+            decoration: BoxDecoration(
+              color: canAccess ? Colors.white : Colors.grey.shade300,
+              borderRadius: BorderRadius.circular(20),
+              border: Border.all(
+                color: borderColor,
+                width: highlight ? 1.8 : 1.0,
               ),
-              const SizedBox(height: 4),
-              Text(
-                '${category.totalSigns} signs',
-                style: TextStyle(color: Colors.grey.shade600, fontSize: 12),
-              ),
-            ],
+              boxShadow: shadows,
+            ),
+            padding: const EdgeInsets.all(16),
+            child: Column(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                AnimatedSwitcher(
+                  duration: const Duration(milliseconds: 300),
+                  transitionBuilder: (child, anim) =>
+                      ScaleTransition(scale: anim, child: child),
+                  child: Icon(
+                    canAccess ? category.icon : Icons.lock_outline_rounded,
+                    key: ValueKey(canAccess),
+                    size: 36,
+                    color: canAccess ? const Color(0xFF087F73) : Colors.grey,
+                  ),
+                ),
+                const SizedBox(height: 10),
+                Text(
+                  category.title,
+                  textAlign: TextAlign.center,
+                  style: TextStyle(
+                    color: canAccess ? const Color(0xFF153B39) : Colors.grey,
+                    fontSize: 16,
+                    fontWeight: FontWeight.w700,
+                  ),
+                ),
+                const SizedBox(height: 4),
+                Text(
+                  '${category.totalSigns} signs',
+                  style: TextStyle(color: Colors.grey.shade600, fontSize: 12),
+                ),
+              ],
+            ),
           ),
         ),
       ),

@@ -14,7 +14,7 @@ const _ink = Color(0xFF153B39);
 const _muted = Color(0xFF6B8581);
 const _bg = Color(0xFFF6FBFA);
 
-/// Live sign check shown after a video lesson ("Sign: <lesson just watched>").
+/// Live sign check shown after a video lesson ("Sign: lesson just watched").
 /// Same layout and recognizer flow as the quiz's live camera challenge, but
 /// with no countdown and no scoring. Unlimited attempts; help escalates:
 ///   - after [hintAfterWrong] wrong locks (or [hintAfterSeconds] with hands
@@ -23,7 +23,8 @@ const _bg = Color(0xFFF6FBFA);
 ///     e.g. camera/hand detection not working): "Skip"
 ///
 /// After every wrong lock, and after the hint dialog closes, the recognizer
-/// view is remounted so a stuck lock / stale Top 3 can't block a correct sign.
+/// is reset through LiveSignView.resetToken (no camera rebuild), so a stuck
+/// lock / stale Top 3 can't block a correct sign.
 ///
 /// Pops with:
 ///   {'success': true, 'attempts': n}  when the sign is matched,
@@ -63,8 +64,10 @@ class _LessonLiveSignScreenState extends State<LessonLiveSignScreen> {
   bool _done = false; // matched
   bool _paused = false; // hint dialog open: ignore recognizer updates
   LiveSignState? _state;
+  bool _mountView = false;
 
-  // Bumping this remounts LiveSignView, clearing its lock and Top 3.
+  // Passed to LiveSignView.resetToken: bumping it resets the recognizer
+  // (lock + Top 3) without recreating the camera.
   int _session = 0;
 
   int _wrongLocks = 0;
@@ -72,11 +75,14 @@ class _LessonLiveSignScreenState extends State<LessonLiveSignScreen> {
   bool get _hintAvailable => _wrongLocks >= hintAfterWrong || _hintByTime;
   bool get _skipAvailable => _wrongLocks >= skipAfterWrong || _skipByTime;
 
-  @override
+ @override
   void initState() {
     super.initState();
     _skipTimer = Timer(const Duration(seconds: skipFallbackSeconds), () {
       if (mounted && !_done) setState(() => _skipByTime = true);
+    });
+    Future.delayed(const Duration(milliseconds: 500), () {
+      if (mounted) setState(() => _mountView = true);
     });
   }
 
@@ -88,10 +94,12 @@ class _LessonLiveSignScreenState extends State<LessonLiveSignScreen> {
     super.dispose();
   }
 
+  
+
   String? _titleOf(String? label) =>
       label == null ? null : (_titleByLabel[label] ?? label);
 
-  /// Fresh recognizer state: remounts the camera view and clears the Top 3.
+  /// Fresh recognizer state: clears the lock and the Top 3.
   void _resetRecognizer() {
     _resetTimer?.cancel();
     setState(() {
@@ -168,7 +176,7 @@ class _LessonLiveSignScreenState extends State<LessonLiveSignScreen> {
         backgroundColor: _bg,
         foregroundColor: _ink,
         elevation: 0,
-        title: Text('${widget.category.title} ',
+        title: Text('${widget.category.title} practice',
             style: const TextStyle(fontWeight: FontWeight.w800)),
         actions: [
           if (_skipAvailable && !_done)
@@ -200,7 +208,7 @@ class _LessonLiveSignScreenState extends State<LessonLiveSignScreen> {
         s.prediction.sign != _target;
     final chipText = wrongLock
         ? 'Try again'
-        : (s != null && s.handCount > 0 ? 'hands detected' : 'show hands');
+        : (s != null && s.handCount > 0 ? 'Hands detected' : 'Show hands');
 
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -252,11 +260,13 @@ class _LessonLiveSignScreenState extends State<LessonLiveSignScreen> {
                 child: Stack(
                   fit: StackFit.expand,
                   children: [
-                    LiveSignView(
-                      key: ValueKey('live$_session'),
+                    _mountView ? LiveSignView(
+                      resetToken: _session,
                       candidates: _titleByLabel.keys.toList(),
                       letters: widget.category.id == lettersCategoryId,
                       onUpdate: _onUpdate,
+                    ): const Center (
+                      child: CircularProgressIndicator(color: Color(0xFF0D9488))
                     ),
                     if (s != null && s.top3.isNotEmpty)
                       Positioned(

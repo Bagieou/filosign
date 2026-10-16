@@ -7,6 +7,7 @@ import 'package:filosign/learn/category.dart';
 import 'package:filosign/learn/lesson.dart';
 import 'package:filosign/learn/live_sign_lesson_screen.dart';
 import 'package:filosign/features/quiz/quiz_screen.dart';
+import 'package:filosign/learn/learn_routes.dart';
 
 class LessonPlayerScreen extends StatefulWidget {
   final List<Lesson> lessons;
@@ -167,16 +168,16 @@ class _LessonPlayerScreenState extends State<LessonPlayerScreen> {
       return;
     }
 
-    // Last lesson of the category: run the 10-question quiz, then return
-    // to Learn.
-    await Navigator.push(
+    // Last lesson of the category: run the 10-question quiz, then carry its
+    // QuizResult all the way up so LearnScreen can unlock the next tile.
+    final quizResult = await Navigator.push<QuizResult>(
       context,
-      MaterialPageRoute(
+      MaterialPageRoute<QuizResult>(
         builder: (_) => QuizScreen(category: widget.category),
       ),
     );
     if (!mounted) return;
-    Navigator.pop(context, true);
+    Navigator.pop(context, quizResult);
   }
 
   void _goPrev() {

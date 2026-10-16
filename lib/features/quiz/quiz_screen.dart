@@ -26,16 +26,7 @@ class _Question {
   _Question(this.lesson, this.live, this.options);
 }
 
-class QuizResult {
-  final String categoryId;
-  final int score;
-  final int total;
-  const QuizResult(
-      {required this.categoryId, required this.score, required this.total});
-  bool get passed => score * 100 >= total * 90;
-}
-
-/// 10-question fquiz for one category. Questions randomly mix a Live Camera
+/// 10-question quiz for one category. Questions randomly mix a Live Camera
 /// Challenge (sign it, matched at >= 85% within the time limit) and Video
 /// Identification (watch, pick 1 of 4). Green = correct (+1 point),
 /// red = incorrect with a reference-video hint pop-up.
@@ -60,7 +51,8 @@ class _QuizScreenState extends State<QuizScreen> {
   bool _celebrating = false;
   bool _saving = false;
   bool _saveFailed = false;
-  bool get _passed => _score * 100 >= _questions.length * 90; // >= 90%
+  bool _serverPassed = false;
+  bool _nextUnlocked = false;
 
   @override
   void initState() {
@@ -82,7 +74,8 @@ class _QuizScreenState extends State<QuizScreen> {
     final types = [for (var i = 0; i < n; i++) i < n ~/ 2]..shuffle(_rng);
     return [
       for (var i = 0; i < n; i++)
-        _Question(picks[i], types[i], types[i] ? const [] : _optionsFor(picks[i], pool))
+        _Question(
+            picks[i], types[i], types[i] ? const [] : _optionsFor(picks[i], pool))
     ];
   }
 
@@ -110,7 +103,8 @@ class _QuizScreenState extends State<QuizScreen> {
       if (correct) _score++;
     });
     if (!correct) {
-      WidgetsBinding.instance.addPostFrameCallback((_) => _showHint(_questions[_index].lesson));
+      WidgetsBinding.instance.addPostFrameCallback(
+          (_) => _showHint(_questions[_index].lesson));
     }
   }
 
@@ -135,6 +129,8 @@ class _QuizScreenState extends State<QuizScreen> {
         _celebrating = false;
         _saving = false;
         _saveFailed = false;
+        _serverPassed = false;
+        _nextUnlocked = false;
       });
 
   void _showMessage(String message, {bool isError = false}) {
@@ -159,22 +155,40 @@ class _QuizScreenState extends State<QuizScreen> {
       _showMessage('Sign in to save your score.', isError: true);
       return;
     }
+    final dbId = kCategoryDbIds[widget.category.id];
+    if (dbId == null) {
+      _saveError('Unknown category: ${widget.category.id}');
+      return;
+    }
 
     setState(() {
       _saving = true;
       _saveFailed = false;
     });
+    progressVersion.value++;
+
+    // The server expects a percentage (0-100), not a raw count.
+    final percent = _score * 100 / _questions.length;
 
     try {
-      await Supabase.instance.client.rpc('submit_quiz', params: {
-        'p_category_id': widget.category.id,
-        'p_score': _score,
+      final res = await Supabase.instance.client.rpc('submit_quiz', params: {
+        'p_category_id': dbId,
+        'p_score': percent,
       });
+      debugPrint('submit_quiz -> $res');///to be removed
       if (!mounted) return;
+      final map = res is Map
+          ? Map<String, dynamic>.from(res)
+          : const <String, dynamic>{};
+      final passed = map['passed'] == true;
       setState(() {
         _saving = false;
-        _celebrating = _passed;
+        _serverPassed = passed;
+        _nextUnlocked = map['next_category_unlocked'] != null;
+        _celebrating = passed;
       });
+    } on PostgrestException catch (e) {
+      _saveError('Could not save score: ${e.message}');
     } on AuthException catch (e) {
       _saveError('Auth error: ${e.code ?? 'unknown'}');
     } catch (_) {
@@ -191,62 +205,71 @@ class _QuizScreenState extends State<QuizScreen> {
     _showMessage(message, isError: true);
   }
 
-  /// Back to the Learn screen: pops everything above CategoryDetailScreen, then
-  /// CategoryDetailScreen itself, so LearnScreen's `await Navigator.push`
-  /// resumes and checks for newly unlocked categories.
-  void _finishQuiz() {
-    if (!mounted) return;
-    final nav = Navigator.of(context);
-    final result = QuizResult(
+  /// The single source of truth for what this route pops. Every exit path
+  /// (celebration Continue, countdown, "Back to quizzes", system back) ends
+  /// up calling [_finishQuiz] or being intercepted by the [PopScope] below,
+  /// so CategoryDetailScreen always receives a typed [QuizResult] and can
+  /// forward it up to LearnScreen.
+  QuizResult get _result => QuizResult(
         categoryId: widget.category.id,
         score: _score,
-        total: _questions.length);
+        total: _questions.length,
+        passed: _serverPassed,
+        nextUnlocked: _nextUnlocked,
+      );
 
-    var foundDetail = false;
-    nav.popUntil((r) {
-      if (r.settings.name == kCategoryDetailRoute) {
-        foundDetail = true;
-        return true;
-      }
-      return r.isFirst; // safety: never pop past the root
-    });
-    if (foundDetail) nav.pop(result);
+  void _finishQuiz() {
+    if (!mounted) return;
+    debugPrint('_finishQuiz popping $_result.nextUnlocked');//to be removed
+    Navigator.of(context).pop(_result);
   }
 
   Future<void> _showHint(Lesson lesson) => showDialog<void>(
         context: context,
-        builder: (_) => _HintDialog(lesson: lesson, months: widget.category.id == 'months'),
+        builder: (_) =>
+            _HintDialog(lesson: lesson, months: widget.category.id == 'months'),
       );
 
   @override
   Widget build(BuildContext context) {
     final done = _index >= _questions.length;
-    return Scaffold(
-      backgroundColor: _bg,
-      appBar: AppBar(
+    return PopScope<QuizResult>(
+      // Intercept the system back gesture / back button so it can't leave
+      // without a result. Direct `Navigator.pop()` calls from buttons still
+      // work — they bypass canPop and carry their own value.
+      canPop: false,
+      onPopInvokedWithResult: (didPop, _) {
+        if (didPop) return;
+        _finishQuiz();
+      },
+      child: Scaffold(
         backgroundColor: _bg,
-        foregroundColor: _ink,
-        elevation: 0,
-        title: Text('${widget.category.title} quiz',
-            style: const TextStyle(fontWeight: FontWeight.w800)),
-      ),
-      body: SafeArea(
-        child: done
-            ? Stack(
-                children: [
-                  _summary(),
-                  if (_celebrating)
-                    Positioned.fill(
-                      child: CelebrationOverlay(
-                        title: 'Congratulations!',
-                        message:
-                            'You scored $_score / ${_questions.length} on the ${widget.category.title} quiz.',
-                        onFinished: _finishQuiz,
+        appBar: AppBar(
+          backgroundColor: _bg,
+          foregroundColor: _ink,
+          elevation: 0,
+          title: Text('${widget.category.title} quiz',
+              style: const TextStyle(fontWeight: FontWeight.w800)),
+        ),
+        body: SafeArea(
+          child: done
+              ? Stack(
+                  children: [
+                    _summary(),
+                    if (_celebrating)
+                      Positioned.fill(
+                        child: CelebrationOverlay(
+                          title: 'Congratulations!',
+                          message: _nextUnlocked
+                              ? 'You scored $_score / ${_questions.length}. The next category is unlocked!'
+                              : 'You scored $_score / ${_questions.length} on the ${widget.category.title} quiz.',
+                          onFinished: _finishQuiz,
+                        ),
                       ),
-                    ),
-                ],
-              )
-            : _questionView(_questions[_index]),
+                  ],
+                )
+              : _questionView(_questions[_index]),
+        ),
       ),
     );
   }
@@ -260,10 +283,12 @@ class _QuizScreenState extends State<QuizScreen> {
           child: Row(
             children: [
               Text('Question ${_index + 1} / ${_questions.length}',
-                  style: const TextStyle(color: _muted, fontWeight: FontWeight.w600)),
+                  style:
+                      const TextStyle(color: _muted, fontWeight: FontWeight.w600)),
               const Spacer(),
               Text('Score $_score',
-                  style: const TextStyle(color: _teal, fontWeight: FontWeight.w800)),
+                  style:
+                      const TextStyle(color: _teal, fontWeight: FontWeight.w800)),
             ],
           ),
         ),
@@ -309,10 +334,12 @@ class _QuizScreenState extends State<QuizScreen> {
     return Container(
       margin: const EdgeInsets.fromLTRB(16, 8, 16, 16),
       padding: const EdgeInsets.all(16),
-      decoration: BoxDecoration(color: color, borderRadius: BorderRadius.circular(18)),
+      decoration:
+          BoxDecoration(color: color, borderRadius: BorderRadius.circular(18)),
       child: Row(
         children: [
-          Icon(ok ? Icons.check_circle_rounded : Icons.cancel_rounded, color: Colors.white, size: 34),
+          Icon(ok ? Icons.check_circle_rounded : Icons.cancel_rounded,
+              color: Colors.white, size: 34),
           const SizedBox(width: 12),
           Expanded(
             child: Column(
@@ -320,7 +347,9 @@ class _QuizScreenState extends State<QuizScreen> {
               children: [
                 Text(ok ? 'Correct!  +1 point' : 'Incorrect',
                     style: const TextStyle(
-                        color: Colors.white, fontSize: 18, fontWeight: FontWeight.w800)),
+                        color: Colors.white,
+                        fontSize: 18,
+                        fontWeight: FontWeight.w800)),
                 Text(
                   ok
                       ? q.lesson.title
@@ -339,7 +368,8 @@ class _QuizScreenState extends State<QuizScreen> {
             ),
           FilledButton(
             onPressed: _next,
-            style: FilledButton.styleFrom(backgroundColor: Colors.white, foregroundColor: color),
+            style: FilledButton.styleFrom(
+                backgroundColor: Colors.white, foregroundColor: color),
             child: Text(_index + 1 >= _questions.length ? 'Finish' : 'Next'),
           ),
         ],
@@ -349,66 +379,82 @@ class _QuizScreenState extends State<QuizScreen> {
 
   Widget _summary() {
     final pct = (_score / _questions.length * 100).round();
-    return Center (
-    child: Padding(
-      padding: const EdgeInsets.all(28),
-      child: Column(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          Icon(pct >= 70 ? Icons.emoji_events_rounded : Icons.school_rounded,
-              size: 72, color: pct >= 70 ? const Color(0xFFE8782F) : _teal),
-          const SizedBox(height: 12),
-          Text('$_score / ${_questions.length}',
-              style: const TextStyle(
-                  color: _ink, fontSize: 40, fontWeight: FontWeight.w800)),
-          Text('$pct% correct',
-              style: const TextStyle(color: _muted, fontSize: 15)),
-          const SizedBox(height: 16),
-          if (_saving)
-            const Row(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                SizedBox(
-                    width: 16,
-                    height: 16,
-                    child: CircularProgressIndicator(
-                        strokeWidth: 2, color: _teal)),
-                SizedBox(width: 10),
-                Text('Saving your score…',
-                    style: TextStyle(color: _muted, fontSize: 13)),
-              ],
-            ),
-            if (_saveFailed)
-            OutlinedButton.icon(
-              onPressed: _submitScore,
-              icon: const Icon(Icons.refresh_rounded),
-              label: const Text('Retry saving score'),
-              style: OutlinedButton.styleFrom(foregroundColor: _teal),
-            ),
-            const SizedBox(height: 24),
-          SizedBox(
-            width: double.infinity,
-            height: 52,
-            child: FilledButton(
-              onPressed: _saving ? null : _restart,
-              style: FilledButton.styleFrom(
-                backgroundColor: _teal,
-                shape: RoundedRectangleBorder(
-                    borderRadius: BorderRadius.circular(14)),
+    return Center(
+      child: Padding(
+        padding: const EdgeInsets.all(28),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(
+                pct >= 70
+                    ? Icons.emoji_events_rounded
+                    : Icons.school_rounded,
+                size: 72,
+                color: pct >= 70 ? const Color(0xFFE8782F) : _teal),
+            const SizedBox(height: 12),
+            Text('$_score / ${_questions.length}',
+                style: const TextStyle(
+                    color: _ink, fontSize: 40, fontWeight: FontWeight.w800)),
+            Text('$pct% correct',
+                style: const TextStyle(color: _muted, fontSize: 15)),
+            const SizedBox(height: 16),
+            if (_saving)
+              const Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  SizedBox(
+                      width: 16,
+                      height: 16,
+                      child: CircularProgressIndicator(
+                          strokeWidth: 2, color: _teal)),
+                  SizedBox(width: 10),
+                  Text('Saving your score…',
+                      style: TextStyle(color: _muted, fontSize: 13)),
+                ],
               ),
-              child: const Text('Try again',
-                  style: TextStyle(fontWeight: FontWeight.w700)),
+            if (_saveFailed)
+              OutlinedButton.icon(
+                onPressed: _submitScore,
+                icon: const Icon(Icons.refresh_rounded),
+                label: const Text('Retry saving score'),
+                style: OutlinedButton.styleFrom(foregroundColor: _teal),
+              ),
+            if (!_saving && !_saveFailed && !_serverPassed)
+              const Padding(
+                padding: EdgeInsets.only(top: 8),
+                child: Text(
+                  'Not quite there yet. Retake the quiz to unlock the next category.',
+                  textAlign: TextAlign.center,
+                  style: TextStyle(color: _muted, fontSize: 13),
+                ),
+              ),
+            const SizedBox(height: 24),
+            SizedBox(
+              width: double.infinity,
+              height: 52,
+              child: FilledButton(
+                onPressed: _saving ? null : _restart,
+                style: FilledButton.styleFrom(
+                  backgroundColor: _teal,
+                  shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(14)),
+                ),
+                child: const Text('Try again',
+                    style: TextStyle(fontWeight: FontWeight.w700)),
+              ),
             ),
-          ),
-          const SizedBox(height: 10),
-          TextButton(
-              onPressed: _saving ? null : () => Navigator.pop(context),
-              child: const Text('Back to quizzes')),
-        ],
+            const SizedBox(height: 10),
+            TextButton(
+              // Was: Navigator.pop(context) — no result, so LearnScreen's
+              // await resumed with null and the tile never unlocked.
+              onPressed: _saving ? null : _finishQuiz,
+              child: const Text('Back to lessons'),
+            ),
+          ],
+        ),
       ),
-    ),
-  );
-}
+    );
+  }
 }
 
 /// Live Camera Challenge: sign [lesson] within [seconds]. Correct when the
@@ -437,12 +483,26 @@ class _LiveQuestionState extends State<_LiveQuestion> {
   late final Map<String, String> _titleByLabel = {
     for (final l in widget.category.lessons) modelLabelForLesson(l.id): l.title
   };
+  late final List<String> _candidates = _titleByLabel.keys.toList();
   late final String _target = modelLabelForLesson(widget.lesson.id);
+
   Timer? _timer;
   late int _left = widget.seconds;
   bool _started = false; // countdown starts once a hand is seen
   bool _done = false;
+  bool _mountView = false;
   LiveSignState? _state;
+
+  @override
+  void initState() {
+    super.initState();
+    // Let the previous camera/detectors finish releasing before a new set is
+    // created. The countdown only starts once a hand is seen, so this costs
+    // the user no quiz time.
+    Future.delayed(const Duration(milliseconds: 500), () {
+      if (mounted) setState(() => _mountView = true);
+    });
+  }
 
   @override
   void dispose() {
@@ -460,7 +520,8 @@ class _LiveQuestionState extends State<_LiveQuestion> {
         setState(() => _left--);
         if (_left <= 0) {
           t.cancel();
-          _finish(false, _titleOf(_state?.prediction.sign) ?? 'no match in time');
+          _finish(false,
+              _titleOf(_state?.prediction.sign) ?? 'no match in time');
         }
       });
     }
@@ -469,7 +530,8 @@ class _LiveQuestionState extends State<_LiveQuestion> {
     }
   }
 
-  String? _titleOf(String? label) => label == null ? null : (_titleByLabel[label] ?? label);
+  String? _titleOf(String? label) =>
+      label == null ? null : (_titleByLabel[label] ?? label);
 
   void _finish(bool ok, String? text) {
     if (_done) return;
@@ -492,21 +554,29 @@ class _LiveQuestionState extends State<_LiveQuestion> {
               const SizedBox(width: 8),
               Expanded(
                 child: Text.rich(TextSpan(children: [
-                  const TextSpan(text: 'Sign:  ', style: TextStyle(color: _muted, fontSize: 16)),
+                  const TextSpan(
+                      text: 'Sign:  ',
+                      style: TextStyle(color: _muted, fontSize: 16)),
                   TextSpan(
                       text: widget.lesson.title,
-                      style: const TextStyle(color: _ink, fontSize: 22, fontWeight: FontWeight.w800)),
+                      style: const TextStyle(
+                          color: _ink,
+                          fontSize: 22,
+                          fontWeight: FontWeight.w800)),
                 ])),
               ),
               Container(
-                padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+                padding:
+                    const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
                 decoration: BoxDecoration(
-                  color: _left <= 3 ? Colors.red.shade50 : const Color(0xFFE6F4F1),
+                  color:
+                      _left <= 3 ? Colors.red.shade50 : const Color(0xFFE6F4F1),
                   borderRadius: BorderRadius.circular(20),
                 ),
                 child: Text(_started ? '${_left}s' : 'Show hands',
                     style: TextStyle(
-                        color: _left <= 3 ? Colors.red.shade700 : _teal, fontWeight: FontWeight.w800)),
+                        color: _left <= 3 ? Colors.red.shade700 : _teal,
+                        fontWeight: FontWeight.w800)),
               ),
             ],
           ),
@@ -522,14 +592,19 @@ class _LiveQuestionState extends State<_LiveQuestion> {
                 child: Stack(
                   fit: StackFit.expand,
                   children: [
-                    LiveSignView(
-                      candidates: _titleByLabel.keys.toList(),
-                      letters: widget.category.id == lettersCategoryId,
-                      onUpdate: _onUpdate,
-                    ),
+                    _mountView ? LiveSignView(
+                          active: !widget.answered,
+                          candidates: _titleByLabel.keys.toList(),
+                          letters: widget.category.id == lettersCategoryId,
+                          onUpdate: _onUpdate,
+                        ): const Center(
+                          child: CircularProgressIndicator(color: Color(0xFF0D9488))),
                     if (s != null && s.top3.isNotEmpty)
                       Positioned(
-                          top: 10, left: 10, child: Top3Panel(state: s, titleOf: (l) => _titleOf(l)!)),
+                          top: 10,
+                          left: 10,
+                          child: Top3Panel(
+                              state: s, titleOf: (l) => _titleOf(l)!)),
                     if (!widget.answered)
                       Positioned(
                         bottom: 10,
@@ -582,7 +657,8 @@ class _VideoQuestionState extends State<_VideoQuestion> {
             Icon(Icons.ondemand_video_rounded, color: _teal),
             SizedBox(width: 8),
             Text('Which sign is this?',
-                style: TextStyle(color: _ink, fontSize: 20, fontWeight: FontWeight.w800)),
+                style: TextStyle(
+                    color: _ink, fontSize: 20, fontWeight: FontWeight.w800)),
           ],
         ),
         const SizedBox(height: 12),
@@ -617,8 +693,10 @@ class _OptionButton extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final (bg, fg, border) = switch (state) {
-      _OptState.correct => (Colors.green.shade600, Colors.white, Colors.green.shade600),
-      _OptState.wrong => (Colors.red.shade600, Colors.white, Colors.red.shade600),
+      _OptState.correct =>
+        (Colors.green.shade600, Colors.white, Colors.green.shade600),
+      _OptState.wrong =>
+        (Colors.red.shade600, Colors.white, Colors.red.shade600),
       _OptState.idle => (Colors.white, _ink, _border),
     };
     return Material(
@@ -637,10 +715,13 @@ class _OptionButton extends StatelessWidget {
             children: [
               Expanded(
                 child: Text(title,
-                    style: TextStyle(color: fg, fontSize: 16, fontWeight: FontWeight.w700)),
+                    style: TextStyle(
+                        color: fg, fontSize: 16, fontWeight: FontWeight.w700)),
               ),
-              if (state == _OptState.correct) const Icon(Icons.check_rounded, color: Colors.white),
-              if (state == _OptState.wrong) const Icon(Icons.close_rounded, color: Colors.white),
+              if (state == _OptState.correct)
+                const Icon(Icons.check_rounded, color: Colors.white),
+              if (state == _OptState.wrong)
+                const Icon(Icons.close_rounded, color: Colors.white),
             ],
           ),
         ),
@@ -659,7 +740,8 @@ class _LoopingVideo extends StatefulWidget {
 }
 
 class _LoopingVideoState extends State<_LoopingVideo> {
-  late final VideoPlayerController _c = VideoPlayerController.asset(widget.asset);
+  late final VideoPlayerController _c =
+      VideoPlayerController.asset(widget.asset);
   bool _ready = false;
 
   @override
@@ -691,7 +773,8 @@ class _LoopingVideoState extends State<_LoopingVideo> {
           aspectRatio: _ready ? _c.value.aspectRatio : 16 / 9,
           child: _ready
               ? VideoPlayer(_c)
-              : const Center(child: CircularProgressIndicator(color: Color(0xFF0D9488))),
+              : const Center(
+                  child: CircularProgressIndicator(color: Color(0xFF0D9488))),
         ),
       ),
     );
@@ -715,9 +798,11 @@ class _HintDialog extends StatelessWidget {
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             Text('How to sign "${lesson.title}"',
-                style: const TextStyle(color: _ink, fontSize: 18, fontWeight: FontWeight.w800)),
+                style: const TextStyle(
+                    color: _ink, fontSize: 18, fontWeight: FontWeight.w800)),
             const SizedBox(height: 12),
-            if (lesson.videoAsset != null) _LoopingVideo(asset: lesson.videoAsset!),
+            if (lesson.videoAsset != null)
+              _LoopingVideo(asset: lesson.videoAsset!),
             const SizedBox(height: 12),
             Text(
               months
