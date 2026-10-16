@@ -27,18 +27,16 @@ jobs:
       - name: Regenerate Missing iOS Scaffolding
         run: |
           if [ ! -d "ios" ] || [ ! -f "ios/Podfile" ]; then
-            echo "⚠️  iOS directory or Podfile missing. Re-generating scaffolding..."
+            echo "iOS directory or Podfile missing. Re-generating scaffolding..."
             flutter create --platforms ios .
           fi
 
       - name: Ensure platform line in Podfile
         run: |
-          if ! grep -qE "^\s*platform\s+:ios" ios/Podfile; then
+          if ! grep -qE "^[[:space:]]*platform[[:space:]]+:ios" ios/Podfile; then
             echo "Inserting 'platform :ios, 15.0' into ios/Podfile"
-            # Insert as the first line of the file, above all comments.
-            sed -i '' "1i\\
-platform :ios, '15.0'\\
-" ios/Podfile
+            { echo "platform :ios, '15.0'"; cat ios/Podfile; } > /tmp/Podfile.new
+            mv /tmp/Podfile.new ios/Podfile
           else
             echo "platform :ios already present in ios/Podfile"
           fi
@@ -48,7 +46,7 @@ platform :ios, '15.0'\\
       - name: Pin iOS deployment target in Xcode project
         run: |
           sed -i '' 's/IPHONEOS_DEPLOYMENT_TARGET = .*;/IPHONEOS_DEPLOYMENT_TARGET = 15.0;/g' ios/Runner.xcodeproj/project.pbxproj || true
-          echo "--- IPHONEOS_DEPLOYMENT_TARGET occurrences ---"
+          echo "--- IPHONEOS_DEPLOYMENT_TARGET = 15.0 count ---"
           grep -c "IPHONEOS_DEPLOYMENT_TARGET = 15.0;" ios/Runner.xcodeproj/project.pbxproj || true
 
       - name: Auto-Inject Bundle Identifier
