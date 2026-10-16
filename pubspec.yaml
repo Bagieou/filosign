@@ -15,7 +15,7 @@ dependencies:
   # FiloSign live recognizer (practice + quiz)
   camera: ^0.12.1
   hand_landmarker: ^3.1.0
-  flutter_pose_detection: ^0.4.1
+  flutter_pose_detection: ^0.4.0
   tflite_flutter: 0.12.0
   flutter_widget_from_html: ^0.17.4
   confetti: ^0.8.0
