@@ -9,7 +9,7 @@ on:
 jobs:
   validate-ios-framework:
     name: Flutter iOS Diagnostic Check
-    runs-on: macos-14
+    runs-on: macos-26
 
     steps:
       - name: Checkout Source Code
@@ -20,6 +20,14 @@ jobs:
         with:
           channel: 'stable'
           cache: true
+
+      - name: Select newest stable Xcode
+        run: |
+          XCODE=$(ls -d /Applications/Xcode_*.app | grep -vi -e beta -e rc | sort -V | tail -1)
+          echo "Using $XCODE"
+          sudo xcode-select -s "$XCODE/Contents/Developer"
+          xcodebuild -version
+          xcrun --sdk iphoneos --show-sdk-version
 
       - name: Resolve Flutter Dependencies
         run: flutter pub get
