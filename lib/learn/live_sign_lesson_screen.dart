@@ -8,6 +8,7 @@ import 'lesson.dart';
 import '../../features/practice/live_sign_view.dart';
 import '../../features/practice/live_practice_screen.dart' show FeedbackBanner, Top3Panel;
 import '../../recognizer/sign_labels.dart';
+import '../../recognizer/v4_sign_recognizer.dart';
 
 const _teal = Color(0xFF087F73);
 const _ink = Color(0xFF153B39);
@@ -96,8 +97,9 @@ class _LessonLiveSignScreenState extends State<LessonLiveSignScreen> {
 
   
 
-  String? _titleOf(String? label) =>
-      label == null ? null : (_titleByLabel[label] ?? label);
+  String? _titleOf(String? label) => label == null
+      ? null
+      : (label == V4SignRecognizer.noneLabel ? 'Not a sign' : (_titleByLabel[label] ?? label));
 
   /// Fresh recognizer state: clears the lock and the Top 3.
   void _resetRecognizer() {
@@ -283,6 +285,7 @@ class _LessonLiveSignScreenState extends State<LessonLiveSignScreen> {
                           sign: _titleOf(s?.prediction.sign),
                           confidence: s?.prediction.confidence ?? 0,
                           locked: false,
+                          notRecognized: s?.notRecognized ?? false,
                         ),
                       ),
                   ],

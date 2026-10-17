@@ -10,6 +10,7 @@ import '../../learn/lesson.dart';
 import '../../recognizer/sign_labels.dart';
 import '../practice/live_practice_screen.dart' show FeedbackBanner, Top3Panel;
 import '../practice/live_sign_view.dart';
+import '../../recognizer/v4_sign_recognizer.dart';
 import 'package:filosign/widgets/celebration_overlay.dart';
 import 'package:filosign/learn/learn_routes.dart';
 
@@ -530,8 +531,9 @@ class _LiveQuestionState extends State<_LiveQuestion> {
     }
   }
 
-  String? _titleOf(String? label) =>
-      label == null ? null : (_titleByLabel[label] ?? label);
+  String? _titleOf(String? label) => label == null
+      ? null
+      : (label == V4SignRecognizer.noneLabel ? 'Not a sign' : (_titleByLabel[label] ?? label));
 
   void _finish(bool ok, String? text) {
     if (_done) return;
@@ -614,6 +616,7 @@ class _LiveQuestionState extends State<_LiveQuestion> {
                           sign: _titleOf(s?.prediction.sign),
                           confidence: s?.prediction.confidence ?? 0,
                           locked: false,
+                          notRecognized: s?.notRecognized ?? false,
                         ),
                       ),
                   ],
@@ -649,35 +652,60 @@ class _VideoQuestionState extends State<_VideoQuestion> {
   @override
   Widget build(BuildContext context) {
     final q = widget.question;
-    return ListView(
-      padding: const EdgeInsets.symmetric(horizontal: 22),
-      children: [
-        const Row(
-          children: [
-            Icon(Icons.ondemand_video_rounded, color: _teal),
-            SizedBox(width: 8),
-            Text('Which sign is this?',
-                style: TextStyle(
-                    color: _ink, fontSize: 20, fontWeight: FontWeight.w800)),
-          ],
-        ),
-        const SizedBox(height: 12),
-        _LoopingVideo(asset: q.lesson.videoAsset!),
-        const SizedBox(height: 16),
-        for (final o in q.options)
-          Padding(
-            padding: const EdgeInsets.only(bottom: 10),
-            child: _OptionButton(
-              title: o.title,
-              state: !widget.answered
-                  ? _OptState.idle
-                  : o == q.lesson
-                      ? _OptState.correct
-                      : (o == widget.picked ? _OptState.wrong : _OptState.idle),
-              onTap: widget.answered ? null : () => widget.onPick(o),
+    _OptState stateOf(Lesson o) => !widget.answered
+        ? _OptState.idle
+        : o == q.lesson
+            ? _OptState.correct
+            : (o == widget.picked ? _OptState.wrong : _OptState.idle);
+    Widget option(int i) => i < q.options.length
+        ? _OptionButton(
+            title: q.options[i].title,
+            state: stateOf(q.options[i]),
+            onTap: widget.answered ? null : () => widget.onPick(q.options[i]),
+          )
+        : const SizedBox.shrink();
+    // Everything fits on one screen: the video takes the free space, the four
+    // answers sit below it as a 2 x 2 grid (no scrolling).
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(16, 0, 16, 8),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          const Row(
+            children: [
+              Icon(Icons.ondemand_video_rounded, color: _teal),
+              SizedBox(width: 8),
+              Text('Which sign is this?',
+                  style: TextStyle(color: _ink, fontSize: 20, fontWeight: FontWeight.w800)),
+            ],
+          ),
+          const SizedBox(height: 10),
+          Expanded(child: Center(child: _LoopingVideo(asset: q.lesson.videoAsset!))),
+          const SizedBox(height: 12),
+          SizedBox(
+            height: 136,
+            child: Column(
+              children: [
+                Expanded(
+                  child: Row(children: [
+                    Expanded(child: option(0)),
+                    const SizedBox(width: 10),
+                    Expanded(child: option(1)),
+                  ]),
+                ),
+                const SizedBox(height: 10),
+                Expanded(
+                  child: Row(children: [
+                    Expanded(child: option(2)),
+                    const SizedBox(width: 10),
+                    Expanded(child: option(3)),
+                  ]),
+                ),
+              ],
             ),
           ),
-      ],
+        ],
+      ),
     );
   }
 }
@@ -706,22 +734,30 @@ class _OptionButton extends StatelessWidget {
         borderRadius: BorderRadius.circular(16),
         onTap: onTap,
         child: Container(
-          padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 16),
+          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+          alignment: Alignment.center,
           decoration: BoxDecoration(
             borderRadius: BorderRadius.circular(16),
-            border: Border.all(color: border),
+            border: Border.all(color: border, width: 1.5),
           ),
           child: Row(
+            mainAxisAlignment: MainAxisAlignment.center,
             children: [
-              Expanded(
-                child: Text(title,
-                    style: TextStyle(
-                        color: fg, fontSize: 16, fontWeight: FontWeight.w700)),
-              ),
               if (state == _OptState.correct)
-                const Icon(Icons.check_rounded, color: Colors.white),
+                const Padding(
+                    padding: EdgeInsets.only(right: 4),
+                    child: Icon(Icons.check_rounded, color: Colors.white, size: 20)),
               if (state == _OptState.wrong)
-                const Icon(Icons.close_rounded, color: Colors.white),
+                const Padding(
+                    padding: EdgeInsets.only(right: 4),
+                    child: Icon(Icons.close_rounded, color: Colors.white, size: 20)),
+              Flexible(
+                child: Text(title,
+                    textAlign: TextAlign.center,
+                    maxLines: 2,
+                    overflow: TextOverflow.ellipsis,
+                    style: TextStyle(color: fg, fontSize: 16, fontWeight: FontWeight.w700)),
+              ),
             ],
           ),
         ),
