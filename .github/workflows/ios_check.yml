@@ -58,6 +58,32 @@ jobs:
           cd ios
           rm -rf Pods Podfile.lock .symlinks
           pod cache clean --all || true
+            - name: Align TensorFlowLite pod versions (2.12.0 -> 2.14.0)
+        run: |
+          PODSPEC=$(python3 - <<'PY'
+          import json, os
+          cfg_path = '.dart_tool/package_config.json'
+          cfg = json.load(open(cfg_path))
+          base = os.path.dirname(os.path.abspath(cfg_path))
+          for p in cfg['packages']:
+              if p['name'] == 'tflite_flutter':
+                  root = p['rootUri']
+                  if root.startswith('file://'):
+                      root = root[len('file://'):]
+                  else:
+                      root = os.path.normpath(os.path.join(base, root))
+                  print(os.path.join(root, 'ios', 'tflite_flutter.podspec'))
+          PY
+          )
+          echo "Podspec: $PODSPEC"
+          echo "--- before ---"
+          grep -n "TensorFlow\|2\.12" "$PODSPEC" || true
+          sed -i '' 's/2\.12\.0/2.14.0/g' "$PODSPEC"
+          echo "--- after ---"
+          grep -n "TensorFlow\|2\.14" "$PODSPEC" || true
+          if grep -q "2\.12\.0" "$PODSPEC"; then
+            echo "Patch did not apply, check the podspec format above"; exit 1
+          fi
 
       - name: Install CocoaPods Dependencies
         run: |
