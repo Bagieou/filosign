@@ -18,6 +18,8 @@ class LiveSignState {
   final String head;
   final int latencyMs;
   final List<bool> present;
+  final bool notRecognized;
+  final bool bodyVisible;
   const LiveSignState({
     required this.prediction,
     required this.locked,
@@ -26,6 +28,8 @@ class LiveSignState {
     required this.head,
     required this.latencyMs,
     required this.present,
+    this.notRecognized = false,
+    this.bodyVisible = true,
   });
 }
 
@@ -39,6 +43,8 @@ class LiveSignView extends StatefulWidget {
   final int resetToken;
   final ValueChanged<LiveSignState>? onUpdate;
   final bool active; // false = stop processing frames (camera stays open)
+  /// Gives the parent the recognizer (used for the debug capture).
+  final ValueChanged<V4SignRecognizer>? onRecognizer;
 
   const LiveSignView({
     super.key,
@@ -48,6 +54,7 @@ class LiveSignView extends StatefulWidget {
     this.resetToken = 0,
     this.active = true,
     this.onUpdate,
+    this.onRecognizer,
   });
   @override
   State<LiveSignView> createState() => _LiveSignViewState();
@@ -59,6 +66,9 @@ class _LiveSignViewState extends State<LiveSignView> with WidgetsBindingObserver
   bool _streaming = false;
   int _lastSentMs = 0;
   int _lastPoseMs = 0;
+  int _lastUpdateMs = 0;
+  bool _lastLocked = false;
+  int _lastPoseOkMs = 0;
   bool _disposed = false;
 
   // Serializes camera teardown/setup across LiveSignView instances, so a new
@@ -100,6 +110,7 @@ class _LiveSignViewState extends State<LiveSignView> with WidgetsBindingObserver
     _recognizer = V4SignRecognizer(letters: widget.letters)
       ..dominantLeft = widget.dominantLeft;
     _recognizer.init();
+    WidgetsBinding.instance.addPostFrameCallback((_) => widget.onRecognizer?.call(_recognizer));
     _pose.initialize().then((_) {
       if (mounted) setState(() => _poseReady = true);
     }).catchError((_) {});
@@ -112,6 +123,13 @@ class _LiveSignViewState extends State<LiveSignView> with WidgetsBindingObserver
       if (!mounted || _disposed || !widget.active) return;
       final p = _recognizer.addFrame(hands, _latestPose, widget.candidates);
       setState(() => _hands = hands);
+      // The parent rebuilds on every update; ~8 per second is plenty for the
+      // text and keeps the UI thread free (lock changes go out at once).
+      final now = DateTime.now().millisecondsSinceEpoch;
+      final locked = _recognizer.isLocked;
+      if (now - _lastUpdateMs < 120 && locked == _lastLocked) return;
+      _lastUpdateMs = now;
+      _lastLocked = locked;
       widget.onUpdate?.call(LiveSignState(
         prediction: p,
         locked: _recognizer.isLocked,
@@ -120,6 +138,8 @@ class _LiveSignViewState extends State<LiveSignView> with WidgetsBindingObserver
         head: _recognizer.headName,
         latencyMs: _recognizer.lastLatencyMs,
         present: _recognizer.lastPresent,
+        notRecognized: _recognizer.notRecognized,
+        bodyVisible: _recognizer.lastPoseOk,
       ));
     });
     _setupCamera();
@@ -161,7 +181,9 @@ class _LiveSignViewState extends State<LiveSignView> with WidgetsBindingObserver
       );
       final controller = CameraController(
         front,
-        ResolutionPreset.low,
+        // 480p: at 240x320 the body/pose detector usually found nothing and hand
+        // tracking dropped frames (teammate debug captures); training was 720p.
+        ResolutionPreset.medium,
         enableAudio: false,
         imageFormatGroup: ImageFormatGroup.yuv420,
       );
@@ -205,7 +227,9 @@ class _LiveSignViewState extends State<LiveSignView> with WidgetsBindingObserver
             landmarker.processFrame(image, orientation);
           } catch (_) {}
         }
-        if (now - _lastPoseMs >= 100) {
+        // Pose frames are copied over the platform channel; 5 per second keeps
+        // the UI thread responsive (the recognizer reuses the latest pose).
+        if (now - _lastPoseMs >= 200) {
           _lastPoseMs = now;
           _feedPose(image, orientation);
         }
@@ -235,8 +259,15 @@ class _LiveSignViewState extends State<LiveSignView> with WidgetsBindingObserver
         rotation: orientation,
       );
       if (_disposed) return;
-      _latestPose =
-          res.poses.isNotEmpty ? res.poses.first.landmarks : const [];
+      // Keep the last good pose for a moment when one detection fails, so the
+      // body location doesn't flicker on and off (training always had it).
+      final now = DateTime.now().millisecondsSinceEpoch;
+      if (res.poses.isNotEmpty) {
+        _latestPose = res.poses.first.landmarks;
+        _lastPoseOkMs = now;
+      } else if (now - _lastPoseOkMs > 1500) {
+        _latestPose = const [];
+      }
     } catch (_) {
     } finally {
       _poseBusy = false;
