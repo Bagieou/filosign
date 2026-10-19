@@ -62,6 +62,7 @@ class V4SignRecognizer implements SignRecognizer {
   int _framesSincePredict = 0;
   int _handsAway = 0;
   int _attempt = 0;
+  final HandSideTracker _sides = HandSideTracker();
   bool _locked = false;
   SignPrediction _last = SignPrediction.none;
   List<MapEntry<String, double>> _top3 = const [];
@@ -201,7 +202,7 @@ class V4SignRecognizer implements SignRecognizer {
           ]
         : null;
     final raw = RawFrameV4(tMs: _clock.elapsedMilliseconds, hands: rawHands, pose: rawPose);
-    final frame = canonicalizeFrame(raw, _imgW, _imgH, dominantLeft);
+    final frame = canonicalizeFrame(raw, _imgW, _imgH, dominantLeft, tracker: _sides);
     lastPresent = frame.present;
     lastPoseOk = frame.poseOk;
     _buffer.add(frame);
@@ -434,6 +435,7 @@ class V4SignRecognizer implements SignRecognizer {
     _top3 = const [];
     _last = SignPrediction.none;
     notRecognized = false;
+    _sides.reset();
   }
 
   @override

@@ -51,7 +51,9 @@ class _PerfMeter {
     String ms(int us, int n) => n == 0 ? '0' : (us / n / 1000).toStringAsFixed(1);
     text = 'cam ${(camera / s).round()}/s · hands ${(hands / s).round()}/s · pose ${(pose / s).round()}/s · '
         'ui ${(frames / s).round()}fps build ${ms(buildUs, frames)} raster ${ms(rasterUs, frames)}ms '
-        'slow $slow · camCb ${ms(camCbUs, camera)} handCb ${ms(handCbUs, hands)}ms · model ${inferMs}ms';
+        'slow $slow · camCb ${ms(camCbUs, camera)} handCb ${ms(handCbUs, hands)}ms · model ${inferMs}ms'
+        '${Platform.isAndroid ? ' · yuv ${HandLandmarkerPlugin.lastConvertMs.toStringAsFixed(0)}ms '
+            'hand ${HandLandmarkerPlugin.lastLatencyMs.toStringAsFixed(0)}ms' : ''}';
     debugPrint('FILOSIGN_PERF $text');
     camera = hands = frames = slow = pose = buildUs = rasterUs = camCbUs = handCbUs = 0;
     _since = now;
@@ -201,6 +203,14 @@ class _LiveSignViewState extends State<LiveSignView> with WidgetsBindingObserver
   int _lastUpdateMs = 0;
   bool _lastLocked = false;
   int _lastPoseOkMs = 0;
+  /// Both shoulders inside the frame with some room: a shoulder clamped to
+  /// the edge (user too close / off-centre) shifted every body-relative
+  /// feature in the debug captures.
+  bool _framingOk = true;
+  /// Hand results per second (moving average); slow phones get fewer pose
+  /// frames so the hand detector keeps up.
+  double _handRate = 20;
+  int _lastHandMs = 0;
   bool _disposed = false;
 
   // Serializes camera teardown/setup across LiveSignView instances, so a new
@@ -264,6 +274,12 @@ class _LiveSignViewState extends State<LiveSignView> with WidgetsBindingObserver
     _landmarkSub = _SharedDetectors.results.listen((hands) {
       if (!mounted || _disposed || !widget.active) return;
       final sw = kShowDebugUi ? (Stopwatch()..start()) : null;
+      final nowMs = DateTime.now().millisecondsSinceEpoch;
+      if (_lastHandMs > 0) {
+        final dt = (nowMs - _lastHandMs).clamp(1, 1000);
+        _handRate = _handRate * 0.9 + (1000 / dt) * 0.1;
+      }
+      _lastHandMs = nowMs;
       final p = _recognizer.addFrame(hands, _latestPose, widget.candidates);
       _hands.value = hands;
       if (sw != null) {
@@ -286,7 +302,7 @@ class _LiveSignViewState extends State<LiveSignView> with WidgetsBindingObserver
         latencyMs: _recognizer.lastLatencyMs,
         present: _recognizer.lastPresent,
         notRecognized: _recognizer.notRecognized,
-        bodyVisible: _recognizer.lastPoseOk,
+        bodyVisible: _recognizer.lastPoseOk && _framingOk,
         perf: _perf.text,
       ));
     });
@@ -417,7 +433,7 @@ class _LiveSignViewState extends State<LiveSignView> with WidgetsBindingObserver
         }
         // Pose frames are copied over the platform channel; 5 per second keeps
         // the UI thread responsive (the recognizer reuses the latest pose).
-        if (!widget.letters && now - _lastPoseMs >= 200) {
+        if (!widget.letters && now - _lastPoseMs >= (_handRate < 12 ? 350 : 200)) {
           _lastPoseMs = now;
           _feedPose(image, orientation);
         }
@@ -448,6 +464,10 @@ class _LiveSignViewState extends State<LiveSignView> with WidgetsBindingObserver
       if (res.poses.isNotEmpty) {
         _latestPose = res.poses.first.landmarks;
         _lastPoseOkMs = now;
+        if (_latestPose.length > 12) {
+          final l = _latestPose[11].x, r = _latestPose[12].x;
+          _framingOk = l > 0.04 && l < 0.96 && r > 0.04 && r < 0.96 && (l - r).abs() < 0.7;
+        }
       } else if (now - _lastPoseOkMs > 1500) {
         _latestPose = const [];
       }

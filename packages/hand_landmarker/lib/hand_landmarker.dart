@@ -64,16 +64,30 @@ class HandLandmarkerPlugin {
   }
 
   /// Exposes a continuous stream of detected hand landmarks.
+  /// FiloSign: native timing of the latest result (debug panel): YUV->RGB
+  /// conversion ms and frame -> result ms (moving averages).
+  static double lastConvertMs = 0, lastLatencyMs = 0;
+
   Stream<List<Hand>> get landmarkStream {
     _landmarkStream ??= _eventChannel.receiveBroadcastStream().map((event) {
       final String resultString = event as String;
       if (resultString.isEmpty || resultString == "[]") return [];
 
-      final parsedResult = jsonDecode(resultString) as List<dynamic>;
+      // FiloSign format: {"c": convertMs, "l": latencyMs, "h": [hands]}
+      final decoded = jsonDecode(resultString);
+      List<dynamic> parsedResult;
+      if (decoded is Map<String, dynamic>) {
+        lastConvertMs = (decoded['c'] as num?)?.toDouble() ?? 0;
+        lastLatencyMs = (decoded['l'] as num?)?.toDouble() ?? 0;
+        parsedResult = decoded['h'] as List<dynamic>? ?? const [];
+      } else {
+        parsedResult = decoded as List<dynamic>;
+      }
       return parsedResult.map((handData) {
         final landmarks = (handData as List<dynamic>).map((landmarkData) {
           final data = landmarkData as Map<String, dynamic>;
-          return Landmark(data['x']!, data['y']!, data['z']!);
+          return Landmark((data['x'] as num).toDouble(), (data['y'] as num).toDouble(),
+              (data['z'] as num).toDouble());
         }).toList();
         return Hand(landmarks);
       }).toList();

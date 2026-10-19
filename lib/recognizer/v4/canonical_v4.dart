@@ -88,8 +88,57 @@ List<String> appearanceSides(List<List<double>> hands, Float32List? pose) {
   return hands[0][0] <= hands[1][0] ? ['R', 'L'] : ['L', 'R'];
 }
 
-/// Canonicalize one frame. [width]/[height] = upright image size.
-CanonFrame canonicalizeFrame(RawFrameV4 f, double width, double height, bool reflect) {
+/// Hand identity across frames (port of canonical.tracked_sides): the phone's
+/// Pose is sparse, stale, and with the user close it often calls a right hand
+/// at the face the LEFT wrist (debug captures), so a nearest-wrist rule put
+/// the signing hand in the "other" slot. A hand keeps the side of the nearest
+/// hand in the previous frame; a new lone hand is the dominant one ('R'), two
+/// new hands go by image x-order.
+class HandSideTracker {
+  static const double gapS = 0.4; // a hand missing longer is identified afresh
+  static const double jump = 0.3; // wrist jump (letterboxed units) that breaks the track
+  List<(String, double, double)> _prev = const [];
+  double _prevT = -1e9;
+
+  void reset() {
+    _prev = const [];
+    _prevT = -1e9;
+  }
+
+  List<String> sides(List<List<double>> hands, double t) {
+    final n = hands.length;
+    if (n == 0) return const [];
+    double dist(int k, (String, double, double) q) {
+      final dx = hands[k][0] - q.$2, dy = hands[k][1] - q.$3;
+      return math.sqrt(dx * dx + dy * dy);
+    }
+
+    List<String>? out;
+    if (_prev.isNotEmpty && t - _prevT <= gapS) {
+      if (n == 1) {
+        final q = _prev.reduce((a, b) => dist(0, a) <= dist(0, b) ? a : b);
+        if (dist(0, q) <= jump) out = [q.$1];
+      } else if (_prev.length == 2) {
+        final straight = dist(0, _prev[0]) + dist(1, _prev[1]);
+        final swapped = dist(0, _prev[1]) + dist(1, _prev[0]);
+        out = straight <= swapped ? [_prev[0].$1, _prev[1].$1] : [_prev[1].$1, _prev[0].$1];
+      } else {
+        final q = _prev[0];
+        final other = q.$1 == 'R' ? 'L' : 'R';
+        out = dist(0, q) <= dist(1, q) ? [q.$1, other] : [other, q.$1];
+      }
+    }
+    out ??= appearanceSides(hands, null);
+    _prev = [for (var k = 0; k < n; k++) (out[k], hands[k][0], hands[k][1])];
+    _prevT = t;
+    return out;
+  }
+}
+
+/// Canonicalize one frame. [width]/[height] = upright image size. With a
+/// [tracker] (the app), hands are identified by tracking instead of Pose.
+CanonFrame canonicalizeFrame(RawFrameV4 f, double width, double height, bool reflect,
+    {HandSideTracker? tracker}) {
   final hands = <List<double>>[];
   for (final h in f.hands.take(2)) {
     final out = List<double>.filled(kHandLm * 3, 0.0);
@@ -118,7 +167,9 @@ CanonFrame canonicalizeFrame(RawFrameV4 f, double width, double height, bool ref
       vis[poseLShoulder] >= poseVisMin &&
       vis[poseRShoulder] >= poseVisMin;
 
-  final sides = appearanceSides(hands, poseOk ? pose : null);
+  final sides = tracker != null
+      ? tracker.sides(hands, f.tMs / 1000.0)
+      : appearanceSides(hands, poseOk ? pose : null);
 
   var outPose = pose, outVis = vis;
   if (reflect) {

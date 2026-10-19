@@ -42,13 +42,22 @@ class MyHandLandmarker(private val context: Context) {
             .setMinHandDetectionConfidence(minHandDetectionConfidence)
             // Listen for results on the background thread
             .setResultListener { result, _ ->
+                // FiloSign: frame -> result delay, sent along for the debug panel
+                if (result != null) {
+                    submitted.remove(result.timestampMs())?.let {
+                        latencyMs = latencyMs * 0.9 + (System.nanoTime() - it) / 1e6 * 0.1
+                    }
+                }
+                val timing = "\"c\":${"%.1f".format(java.util.Locale.US, convertMs)}," +
+                        "\"l\":${"%.1f".format(java.util.Locale.US, latencyMs)}"
                 if (result == null || result.landmarks().isEmpty()) {
-                    HandLandmarkerPlugin.sendLandmarks("[]")
+                    HandLandmarkerPlugin.sendLandmarks("{$timing,\"h\":[]}")
                     return@setResultListener
                 }
 
                 // Build a JSON string of the landmarks
                 val handsJson = StringBuilder()
+                handsJson.append("{").append(timing).append(",\"h\":")
                 handsJson.append("[")
                 result.landmarks().forEachIndexed { handIndex, handLandmarks ->
                     handsJson.append("[")
@@ -67,7 +76,7 @@ class MyHandLandmarker(private val context: Context) {
                         handsJson.append(",")
                     }
                 }
-                handsJson.append("]")
+                handsJson.append("]}")
 
                 // Send the generated JSON string to Dart via the plugin's companion object
                 HandLandmarkerPlugin.sendLandmarks(handsJson.toString())
@@ -90,6 +99,21 @@ class MyHandLandmarker(private val context: Context) {
     private val busy = java.util.concurrent.atomic.AtomicBoolean(false)
     private var lastTimestampMs = 0L
 
+    // Buffers are reused: allocating ~3 MB per frame (planes, pixels, bitmap)
+    // made weak phones spend their time in garbage collection. Only touched
+    // while `busy` is held, so the next frame can't overwrite them early.
+    private var yArr = ByteArray(0)
+    private var uArr = ByteArray(0)
+    private var vArr = ByteArray(0)
+    private var argb = IntArray(0)
+    private val bitmaps = arrayOfNulls<Bitmap>(3)    // ring: MediaPipe may still read the last one
+    private var nextBitmap = 0
+
+    /** Timing for the app's debug panel: YUV->RGB ms and frame->result ms (moving averages). */
+    @Volatile var convertMs = 0.0
+    @Volatile var latencyMs = 0.0
+    private val submitted = java.util.concurrent.ConcurrentHashMap<Long, Long>()
+
     fun processFrame(
         yBuffer: ByteBuffer, uBuffer: ByteBuffer, vBuffer: ByteBuffer,
         width: Int, height: Int, yRowStride: Int, uvRowStride: Int, uvPixelStride: Int,
@@ -98,20 +122,24 @@ class MyHandLandmarker(private val context: Context) {
         if (handLandmarker == null) return
         if (!busy.compareAndSet(false, true)) return // still working on the last frame
 
-        val y = ByteArray(yBuffer.remaining()).also { yBuffer.duplicate().get(it) }
-        val u = ByteArray(uBuffer.remaining()).also { uBuffer.duplicate().get(it) }
-        val v = ByteArray(vBuffer.remaining()).also { vBuffer.duplicate().get(it) }
+        yArr = copyInto(yBuffer, yArr)
+        uArr = copyInto(uBuffer, uArr)
+        vArr = copyInto(vBuffer, vArr)
 
         worker.execute {
             try {
                 val lm = handLandmarker ?: return@execute
-                val bitmap = yuvArraysToBitmap(y, u, v, width, height, yRowStride, uvRowStride, uvPixelStride)
+                val t0 = System.nanoTime()
+                val bitmap = yuvToBitmap(width, height, yRowStride, uvRowStride, uvPixelStride)
+                convertMs = convertMs * 0.9 + (System.nanoTime() - t0) / 1e6 * 0.1
                 val mpImage = BitmapImageBuilder(bitmap).build()
                 val imageProcessingOptions = ImageProcessingOptions.builder()
                     .setRotationDegrees(rotation)
                     .build()
                 val ts = if (timestampMs > lastTimestampMs) timestampMs else lastTimestampMs + 1
                 lastTimestampMs = ts
+                submitted[ts] = System.nanoTime()
+                if (submitted.size > 32) submitted.keys.filter { it < ts - 2000 }.forEach { submitted.remove(it) }
                 // detectAsync: MediaPipe runs the model on its own thread
                 lm.detectAsync(mpImage, imageProcessingOptions, ts)
                 mpImage.close()
@@ -123,33 +151,65 @@ class MyHandLandmarker(private val context: Context) {
         }
     }
 
-    /** Same integer YUV->ARGB math as [yuvToRgbBitmap], on plain arrays. */
-    private fun yuvArraysToBitmap(
-        yArr: ByteArray, uArr: ByteArray, vArr: ByteArray,
+    private fun copyInto(src: ByteBuffer, dst: ByteArray): ByteArray {
+        val n = src.remaining()
+        val out = if (dst.size == n) dst else ByteArray(n)
+        src.duplicate().get(out)
+        return out
+    }
+
+    /** Integer YUV->ARGB (same math as [yuvToRgbBitmap]) into reused buffers;
+     *  each chroma sample is decoded once for its 2x2 block of pixels. */
+    private fun yuvToBitmap(
         width: Int, height: Int, yRowStride: Int, uvRowStride: Int, uvPixelStride: Int
     ): Bitmap {
-        val argb = IntArray(width * height)
-        var yp = 0
-        for (j in 0 until height) {
-            val uvRowStart = (j shr 1) * uvRowStride
-            val yRowStart = j * yRowStride
-            for (i in 0 until width) {
-                val uvOffset = uvRowStart + (i shr 1) * uvPixelStride
-                val y = (yArr[yRowStart + i].toInt() and 0xFF) - 16
-                val u = (uArr[uvOffset].toInt() and 0xFF) - 128
-                val v = (vArr[uvOffset].toInt() and 0xFF) - 128
-                val y1192 = if (y < 0) 0 else 1192 * y
-                var r = y1192 + 1634 * v
-                var g = y1192 - 833 * v - 400 * u
-                var b = y1192 + 2066 * u
-                r = if (r < 0) 0 else if (r > 262143) 262143 else r
-                g = if (g < 0) 0 else if (g > 262143) 262143 else g
-                b = if (b < 0) 0 else if (b > 262143) 262143 else b
-                argb[yp++] = -0x1000000 or ((r shl 6) and 0xFF0000) or
-                        ((g shr 2) and 0xFF00) or ((b shr 10) and 0xFF)
+        val n = width * height
+        if (argb.size != n) argb = IntArray(n)
+        val px = argb; val ys = yArr; val us = uArr; val vs = vArr
+        var j = 0
+        while (j < height) {
+            val uvRow = (j shr 1) * uvRowStride
+            val y0 = j * yRowStride
+            val y1 = if (j + 1 < height) y0 + yRowStride else -1
+            val o0 = j * width
+            var i = 0
+            while (i < width) {
+                val uv = uvRow + (i shr 1) * uvPixelStride
+                val u = (us[uv].toInt() and 0xFF) - 128
+                val v = (vs[uv].toInt() and 0xFF) - 128
+                val rv = 1634 * v
+                val guv = -833 * v - 400 * u
+                val bu = 2066 * u
+                px[o0 + i] = pack(ys[y0 + i], rv, guv, bu)
+                if (i + 1 < width) px[o0 + i + 1] = pack(ys[y0 + i + 1], rv, guv, bu)
+                if (y1 >= 0) {
+                    px[o0 + width + i] = pack(ys[y1 + i], rv, guv, bu)
+                    if (i + 1 < width) px[o0 + width + i + 1] = pack(ys[y1 + i + 1], rv, guv, bu)
+                }
+                i += 2
             }
+            j += 2
         }
-        return Bitmap.createBitmap(argb, width, height, Bitmap.Config.ARGB_8888)
+        var bmp = bitmaps[nextBitmap]
+        if (bmp == null || bmp.width != width || bmp.height != height) {
+            bmp = Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888)
+            bitmaps[nextBitmap] = bmp
+        }
+        nextBitmap = (nextBitmap + 1) % bitmaps.size
+        bmp!!.setPixels(px, 0, width, 0, 0, width, height)
+        return bmp
+    }
+
+    private fun pack(yb: Byte, rv: Int, guv: Int, bu: Int): Int {
+        val y = (yb.toInt() and 0xFF) - 16
+        val y1192 = if (y < 0) 0 else 1192 * y
+        var r = y1192 + rv
+        var g = y1192 + guv
+        var b = y1192 + bu
+        r = if (r < 0) 0 else if (r > 262143) 262143 else r
+        g = if (g < 0) 0 else if (g > 262143) 262143 else g
+        b = if (b < 0) 0 else if (b > 262143) 262143 else b
+        return -0x1000000 or ((r shl 6) and 0xFF0000) or ((g shr 2) and 0xFF00) or ((b shr 10) and 0xFF)
     }
 
     /**
