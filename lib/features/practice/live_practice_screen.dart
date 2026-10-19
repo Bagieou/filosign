@@ -11,8 +11,8 @@ import '../../recognizer/v4_sign_recognizer.dart';
 import 'live_sign_view.dart';
 
 /// Live camera practice for one Learn category: sign anything from the
-/// category; the top-3 guesses are shown live, the banner turns green when a
-/// sign is matched at >= 85%.
+/// category; the banner turns green when a sign is matched at >= 85%
+/// (top-3 guesses only with [kShowDebugUi]).
 class LivePracticeScreen extends StatefulWidget {
   final LearnCategory category;
   const LivePracticeScreen({super.key, required this.category});
@@ -86,11 +86,12 @@ class _LivePracticeScreenState extends State<LivePracticeScreen> {
         foregroundColor: Colors.white,
         title: Text('${widget.category.title} practice'),
         actions: [
-          IconButton(
-            tooltip: 'Save debug data (wrong guess)',
-            icon: const Icon(Icons.bug_report_outlined),
-            onPressed: _debugCapture,
-          ),
+          if (kShowDebugUi)
+            IconButton(
+              tooltip: 'Save debug data (wrong guess)',
+              icon: const Icon(Icons.bug_report_outlined),
+              onPressed: _debugCapture,
+            ),
           TextButton.icon(
             style: TextButton.styleFrom(foregroundColor: Colors.white),
             onPressed: () => setState(() {
@@ -119,7 +120,7 @@ class _LivePracticeScreenState extends State<LivePracticeScreen> {
             right: 12,
             child: _HintCard(
               text: 'Sign any ${widget.category.title.toLowerCase()} sign'
-                  ' · hands: ${s?.handCount ?? 0}',
+                  '${kShowDebugUi ? ' · hands: ${s?.handCount ?? 0}' : ''}',
               tip: (s != null && s.handCount > 0 && !s.bodyVisible &&
                       widget.category.id != lettersCategoryId)
                   ? 'Step back: your shoulders and face must be in view for this sign.'
@@ -128,7 +129,7 @@ class _LivePracticeScreenState extends State<LivePracticeScreen> {
                       : null,
             ),
           ),
-          if (s != null && s.top3.isNotEmpty)
+          if (kShowDebugUi && s != null && s.top3.isNotEmpty)
             Positioned(top: 84, left: 12, child: Top3Panel(state: s, titleOf: _title)),
           Positioned(
             bottom: 16,

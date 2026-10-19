@@ -9,6 +9,11 @@ import 'package:hand_landmarker/hand_landmarker.dart';
 import '../../recognizer/sign_recognizer.dart';
 import '../../recognizer/v4_sign_recognizer.dart';
 
+/// Developer overlays (hand landmarks, top-3, debug capture button).
+/// Off in normal builds; turn on with
+/// `flutter build apk --dart-define=FILOSIGN_DEBUG_UI=true`.
+const bool kShowDebugUi = bool.fromEnvironment('FILOSIGN_DEBUG_UI');
+
 /// Snapshot of the live recognizer, sent to the parent after every frame.
 class LiveSignState {
   final SignPrediction prediction;
@@ -352,7 +357,7 @@ class _LiveSignViewState extends State<LiveSignView> with WidgetsBindingObserver
           fit: StackFit.expand,
           children: [
             CameraPreview(controller),
-            if (previewSize != null)
+            if (kShowDebugUi && previewSize != null)
               CustomPaint(
                 painter: _HandOverlayPainter(
                   hands: _hands,

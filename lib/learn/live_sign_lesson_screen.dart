@@ -270,7 +270,7 @@ class _LessonLiveSignScreenState extends State<LessonLiveSignScreen> {
                     ): const Center (
                       child: CircularProgressIndicator(color: Color(0xFF0D9488))
                     ),
-                    if (s != null && s.top3.isNotEmpty)
+                    if (kShowDebugUi && s != null && s.top3.isNotEmpty)
                       Positioned(
                           top: 10,
                           left: 10,
