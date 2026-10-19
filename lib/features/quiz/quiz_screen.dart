@@ -500,7 +500,7 @@ class _LiveQuestionState extends State<_LiveQuestion> {
     // Let the previous camera/detectors finish releasing before a new set is
     // created. The countdown only starts once a hand is seen, so this costs
     // the user no quiz time.
-    Future.delayed(const Duration(milliseconds: 500), () {
+    Future.delayed(Duration.zero, () {
       if (mounted) setState(() => _mountView = true);
     });
   }

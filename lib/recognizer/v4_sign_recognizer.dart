@@ -40,7 +40,9 @@ class V4SignRecognizer implements SignRecognizer {
   final bool letters;
   final List<Interpreter> _interpreters = [];
   final List<IsolateInterpreter> _isoInterpreters = [];
-  bool _predicting = false;
+  /// Shared: the cached models must never run twice at once (IsolateInterpreter
+  /// silently skips a run while busy), even across two overlapping screens.
+  static bool _predicting = false;
   List<String> _labels = const [];
   bool _ready = false;
 
@@ -88,16 +90,42 @@ class V4SignRecognizer implements SignRecognizer {
 
   bool get hasImageSize => _imgW > 0;
 
+  /// Models stay loaded for the whole app session (per head), so opening a
+  /// camera screen doesn't reload 3 models + background isolates every time.
+  static final Map<String, Future<_HeadModels>> _cache = {};
+
+  static Future<_HeadModels> _models(String head) =>
+      _cache[head] ??= _loadModels(head).catchError((Object e) {
+        _cache.remove(head);
+        throw e;
+      });
+
+  static Future<_HeadModels> _loadModels(String head) async {
+    final interps = <Interpreter>[], iso = <IsolateInterpreter>[];
+    for (final s in [101, 202, 303]) {
+      final interp = await Interpreter.fromAsset('assets/models/filosign_v4_${head}_seed$s.tflite');
+      interps.add(interp);
+      iso.add(await IsolateInterpreter.create(address: interp.address));
+    }
+    final raw = await rootBundle.loadString('assets/models/labels_v4_$head.json');
+    final labels = (jsonDecode(raw) as List<dynamic>).map((e) => e.toString()).toList();
+    return _HeadModels(interps, iso, labels);
+  }
+
+  /// Load both heads in the background (e.g. after the app starts).
+  static Future<void> preload() async {
+    try {
+      await _models('words');
+      await _models('letters');
+    } catch (_) {}
+  }
+
   @override
   Future<void> init() async {
-    for (final s in [101, 202, 303]) {
-      final interp =
-          await Interpreter.fromAsset('assets/models/filosign_v4_${headName}_seed$s.tflite');
-      _interpreters.add(interp);
-      _isoInterpreters.add(await IsolateInterpreter.create(address: interp.address));
-    }
-    final raw = await rootBundle.loadString('assets/models/labels_v4_$headName.json');
-    _labels = (jsonDecode(raw) as List<dynamic>).map((e) => e.toString()).toList();
+    final m = await _models(headName);
+    _interpreters.addAll(m.interpreters);
+    _isoInterpreters.addAll(m.isolates);
+    _labels = m.labels;
     _ready = true;
   }
 
@@ -376,24 +404,19 @@ class V4SignRecognizer implements SignRecognizer {
 
   @override
   void dispose() {
+    // the models are shared and cached (see [_cache]); just stop using them
     _ready = false;
-    final iso = [..._isoInterpreters];
-    final interps = [..._interpreters];
+    _attempt++;
     _isoInterpreters.clear();
     _interpreters.clear();
-    // let an in-flight prediction finish before freeing the models
-    Future(() async {
-      while (_predicting) {
-        await Future<void>.delayed(const Duration(milliseconds: 50));
-      }
-      for (final i in iso) {
-        await i.close();
-      }
-      for (final i in interps) {
-        i.close();
-      }
-    });
   }
+}
+
+class _HeadModels {
+  final List<Interpreter> interpreters;
+  final List<IsolateInterpreter> isolates;
+  final List<String> labels;
+  _HeadModels(this.interpreters, this.isolates, this.labels);
 }
 
 /// Runs in a background isolate: canonical frames -> model input [1][30][F].

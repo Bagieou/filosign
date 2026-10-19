@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:math' as math;
 
 import 'package:camera/camera.dart';
+import 'package:flutter/foundation.dart' show ValueListenable;
 import 'package:flutter/material.dart';
 import 'package:flutter_pose_detection/flutter_pose_detection.dart';
 import 'package:hand_landmarker/hand_landmarker.dart';
@@ -98,7 +99,12 @@ class _LiveSignViewState extends State<LiveSignView> with WidgetsBindingObserver
 
   HandLandmarkerPlugin? _landmarker;
   StreamSubscription<List<Hand>>? _landmarkSub;
-  List<Hand> _hands = const [];
+  /// Latest hands for the overlay: repaints only the painter, not the preview.
+  final ValueNotifier<List<Hand>> _hands = ValueNotifier(const []);
+  /// One hand frame in flight at a time: sending every frame regardless let
+  /// a queue build up, so the landmarks lagged behind the video ("ghosting").
+  bool _handBusy = false;
+  int _handSentMs = 0;
 
   final NpuPoseDetector _pose =
       NpuPoseDetector(config: PoseDetectorConfig.realtime());
@@ -116,18 +122,28 @@ class _LiveSignViewState extends State<LiveSignView> with WidgetsBindingObserver
       ..dominantLeft = widget.dominantLeft;
     _recognizer.init();
     WidgetsBinding.instance.addPostFrameCallback((_) => widget.onRecognizer?.call(_recognizer));
-    _pose.initialize().then((_) {
-      if (mounted) setState(() => _poseReady = true);
-    }).catchError((_) {});
+    _setupCamera();
+  }
+
+  /// Native detectors are created only after the previous view's teardown:
+  /// the hand plugin shares one event channel between instances, so creating
+  /// before the old one is disposed killed the new stream.
+  void _createDetectors() {
+    if (!widget.letters) { // the letters model doesn't use the body
+      _pose.initialize().then((_) {
+        if (mounted && !_disposed) _poseReady = true;
+      }).catchError((_) {});
+    }
     _landmarker = HandLandmarkerPlugin.create(
       numHands: 2,
       minHandDetectionConfidence: 0.5,
       delegate: HandLandmarkerDelegate.gpu,
     );
     _landmarkSub = _landmarker!.landmarkStream.listen((hands) {
+      _handBusy = false;
       if (!mounted || _disposed || !widget.active) return;
       final p = _recognizer.addFrame(hands, _latestPose, widget.candidates);
-      setState(() => _hands = hands);
+      _hands.value = hands;
       // The parent rebuilds on every update; ~8 per second is plenty for the
       // text and keeps the UI thread free (lock changes go out at once).
       final now = DateTime.now().millisecondsSinceEpoch;
@@ -147,7 +163,6 @@ class _LiveSignViewState extends State<LiveSignView> with WidgetsBindingObserver
         bodyVisible: _recognizer.lastPoseOk,
       ));
     });
-    _setupCamera();
   }
 
   @override
@@ -169,11 +184,15 @@ class _LiveSignViewState extends State<LiveSignView> with WidgetsBindingObserver
   }
 
   Future<void> _setupCamera() async {
+    // A replaced view is disposed at the END of the frame that mounts this
+    // one, so wait for that frame before reading the teardown queue.
+    await WidgetsBinding.instance.endOfFrame;
     // Bounded wait: a hung teardown can't block this view forever.
     try {
       await _lastTeardown.timeout(const Duration(seconds: 3));
     } catch (_) {}
-    if (!mounted) return;
+    if (!mounted || _disposed) return;
+    if (_landmarker == null) _createDetectors();
     try {
       final cameras = await availableCameras();
       if (cameras.isEmpty) {
@@ -226,15 +245,20 @@ class _LiveSignViewState extends State<LiveSignView> with WidgetsBindingObserver
               imageHeight: image.height);
         }
         final now = DateTime.now().millisecondsSinceEpoch;
-        if (now - _lastSentMs >= 33) {
+        // next frame only once the previous result is back (or lost: 300 ms)
+        if (now - _lastSentMs >= 33 && (!_handBusy || now - _handSentMs > 300)) {
           _lastSentMs = now;
+          _handSentMs = now;
+          _handBusy = true;
           try {
             landmarker.processFrame(image, orientation);
-          } catch (_) {}
+          } catch (_) {
+            _handBusy = false;
+          }
         }
         // Pose frames are copied over the platform channel; 5 per second keeps
         // the UI thread responsive (the recognizer reuses the latest pose).
-        if (now - _lastPoseMs >= 200) {
+        if (!widget.letters && now - _lastPoseMs >= 200) {
           _lastPoseMs = now;
           _feedPose(image, orientation);
         }
@@ -313,6 +337,7 @@ class _LiveSignViewState extends State<LiveSignView> with WidgetsBindingObserver
     WidgetsBinding.instance.removeObserver(this);
     _landmarkSub?.cancel();
     _enqueue(_teardown);
+    _hands.dispose();
     super.dispose();
   }
 
@@ -350,24 +375,37 @@ class _LiveSignViewState extends State<LiveSignView> with WidgetsBindingObserver
           child: CircularProgressIndicator(color: Color(0xFF0D9488)));
     }
     final previewSize = controller.value.previewSize;
-    return Center(
-      child: AspectRatio(
-        aspectRatio: 1 / controller.value.aspectRatio,
-        child: Stack(
-          fit: StackFit.expand,
-          children: [
-            CameraPreview(controller),
-            if (previewSize != null)
-              CustomPaint(
-                painter: _HandOverlayPainter(
-                  hands: _hands,
-                  previewSize: previewSize,
-                  sensorOrientation: controller.description.sensorOrientation,
-                  isFront: controller.description.lensDirection ==
-                      CameraLensDirection.front,
-                ),
+    final view = Stack(
+      fit: StackFit.expand,
+      children: [
+        CameraPreview(controller),
+        if (previewSize != null)
+          RepaintBoundary(
+            child: CustomPaint(
+              painter: _HandOverlayPainter(
+                hands: _hands,
+                previewSize: previewSize,
+                sensorOrientation: controller.description.sensorOrientation,
+                isFront: controller.description.lensDirection ==
+                    CameraLensDirection.front,
               ),
-          ],
+            ),
+          ),
+      ],
+    );
+    if (previewSize == null) {
+      return Center(
+        child: AspectRatio(aspectRatio: 1 / controller.value.aspectRatio, child: view),
+      );
+    }
+    // Fill the whole box (crop the edges) instead of black bars.
+    return ClipRect(
+      child: FittedBox(
+        fit: BoxFit.cover,
+        child: SizedBox(
+          width: previewSize.height, // portrait: sensor width/height swap
+          height: previewSize.width,
+          child: view,
         ),
       ),
     );
@@ -375,7 +413,7 @@ class _LiveSignViewState extends State<LiveSignView> with WidgetsBindingObserver
 }
 
 class _HandOverlayPainter extends CustomPainter {
-  final List<Hand> hands;
+  final ValueListenable<List<Hand>> hands;
   final Size previewSize;
   final int sensorOrientation;
   final bool isFront;
@@ -384,7 +422,7 @@ class _HandOverlayPainter extends CustomPainter {
     required this.previewSize,
     required this.sensorOrientation,
     required this.isFront,
-  });
+  }) : super(repaint: hands);
 
   static const List<List<int>> _connections = [
     [0, 1], [1, 2], [2, 3], [3, 4], [0, 5], [5, 6], [6, 7], [7, 8],
@@ -394,6 +432,7 @@ class _HandOverlayPainter extends CustomPainter {
 
   @override
   void paint(Canvas canvas, Size size) {
+    final hands = this.hands.value;
     if (hands.isEmpty) return;
     final scale = size.width / previewSize.height;
     if (scale <= 0 || scale.isNaN || scale.isInfinite) return;

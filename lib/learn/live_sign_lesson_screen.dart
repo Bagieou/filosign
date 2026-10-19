@@ -82,7 +82,7 @@ class _LessonLiveSignScreenState extends State<LessonLiveSignScreen> {
     _skipTimer = Timer(const Duration(seconds: skipFallbackSeconds), () {
       if (mounted && !_done) setState(() => _skipByTime = true);
     });
-    Future.delayed(const Duration(milliseconds: 500), () {
+    Future.delayed(Duration.zero, () {
       if (mounted) setState(() => _mountView = true);
     });
   }
