@@ -2,14 +2,15 @@ name: iOS Deep Compiler Validation
 
 on:
   push:
-    branches: [ main, master ]
+    branches: [ main, master, 'feature/ios-*' ]
+  workflow_dispatch:
   pull_request:
     branches: [ main, master ]
 
 jobs:
   validate-ios-framework:
     name: Flutter iOS Diagnostic Check
-    runs-on: macos-15
+    runs-on: macos-26
 
     steps:
       - name: Checkout Source Code
@@ -21,31 +22,97 @@ jobs:
           channel: 'stable'
           cache: true
 
+      - name: Select newest stable Xcode
+        run: |
+          XCODE=$(ls -d /Applications/Xcode_*.app | grep -vi -e beta -e rc | sort -V | tail -1)
+          echo "Using $XCODE"
+          sudo xcode-select -s "$XCODE/Contents/Developer"
+          xcodebuild -version
+          xcrun --sdk iphoneos --show-sdk-version
+
       - name: Resolve Flutter Dependencies
         run: flutter pub get
 
       - name: Regenerate Missing iOS Scaffolding
         run: |
-          # Safe fallback check: If files were missed by git, recreate them on the runner
           if [ ! -d "ios" ] || [ ! -f "ios/Podfile" ]; then
-            echo "⚠️ iOS directory or Podfile missing. Re-generating scaffolding..."
+            echo "iOS directory or Podfile missing. Re-generating scaffolding..."
             flutter create --platforms ios .
           fi
+
+      - name: Ensure platform line in Podfile
+        run: |
+          if ! grep -qE "^[[:space:]]*platform[[:space:]]+:ios" ios/Podfile; then
+            echo "Inserting 'platform :ios, 15.0' into ios/Podfile"
+            { echo "platform :ios, '15.0'"; cat ios/Podfile; } > /tmp/Podfile.new
+            mv /tmp/Podfile.new ios/Podfile
+          else
+            echo "platform :ios already present in ios/Podfile"
+          fi
+          echo "--- ios/Podfile (first 20 lines) ---"
+          head -20 ios/Podfile
+
+      - name: Pin iOS deployment target in Xcode project
+        run: |
+          sed -i '' 's/IPHONEOS_DEPLOYMENT_TARGET = .*;/IPHONEOS_DEPLOYMENT_TARGET = 15.0;/g' ios/Runner.xcodeproj/project.pbxproj || true
+          echo "--- IPHONEOS_DEPLOYMENT_TARGET = 15.0 count ---"
+          grep -c "IPHONEOS_DEPLOYMENT_TARGET = 15.0;" ios/Runner.xcodeproj/project.pbxproj || true
 
       - name: Auto-Inject Bundle Identifier
         run: |
           sed -i '' 's/PRODUCT_BUNDLE_IDENTIFIER = .*;/PRODUCT_BUNDLE_IDENTIFIER = com.filosign.app;/g' ios/Runner.xcodeproj/project.pbxproj || true
 
-      - name: Run Platform Compilation Test
+      - name: Clean CocoaPods State
         run: |
-          # Compiles the workspace and creates an unsigned .ipa package bundle
-          flutter build ipa --release --no-codesign -v
+          cd ios
+          rm -rf Pods Podfile.lock .symlinks
+          pod cache clean --all || true
+
+      - name: Align TensorFlowLite pod versions (2.12.0 -> 2.14.0)
+        run: |
+          PODSPEC=$(python3 - <<'PY'
+          import json, os
+          cfg_path = '.dart_tool/package_config.json'
+          cfg = json.load(open(cfg_path))
+          base = os.path.dirname(os.path.abspath(cfg_path))
+          for p in cfg['packages']:
+              if p['name'] == 'tflite_flutter':
+                  root = p['rootUri']
+                  if root.startswith('file://'):
+                      root = root[len('file://'):]
+                  else:
+                      root = os.path.normpath(os.path.join(base, root))
+                  print(os.path.join(root, 'ios', 'tflite_flutter.podspec'))
+          PY
+          )
+          echo "Podspec: $PODSPEC"
+          echo "--- before ---"
+          grep -n "TensorFlow\|2\.12" "$PODSPEC" || true
+          sed -i '' 's/2\.12\.0/2.14.0/g' "$PODSPEC"
+          echo "--- after ---"
+          grep -n "TensorFlow\|2\.14" "$PODSPEC" || true
+          if grep -q "2\.12\.0" "$PODSPEC"; then
+            echo "Patch did not apply, check the podspec format above"
+            exit 1
+          fi
+
+      - name: Install CocoaPods Dependencies
+        run: |
+          cd ios
+          pod install --repo-update
+
+      - name: Build iOS (unsigned)
+        run: flutter build ios --release --no-codesign --no-pub
+
+      - name: Manually Package App Payload
+        run: |
+          mkdir -p Payload
+          cp -r build/ios/iphoneos/Runner.app Payload/
+          zip -r app-release.ipa Payload/
 
       - name: Upload IPA Artifact to GitHub
         uses: actions/upload-artifact@v4
         with:
           name: Unsigned-iOS-App
-          path: |
-            build/ios/ipa/*.ipa
-            build/ios/iphoneos/*.app
+          path: app-release.ipa
           retention-days: 7

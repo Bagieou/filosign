@@ -14,11 +14,12 @@ dependencies:
   shared_preferences: ^2.2.2
   # FiloSign live recognizer (practice + quiz)
   camera: ^0.12.1
-  # vendored + patched: frame conversion off the UI thread (see MyHandLandmarker.kt)
+  # vendored + patched: frame conversion off the UI thread (Android) and an
+  # iOS MediaPipe implementation (see packages/hand_landmarker)
   hand_landmarker:
     path: packages/hand_landmarker
-  flutter_pose_detection: ^0.4.1
-  tflite_flutter: ^0.12.0
+  flutter_pose_detection: ^0.4.0
+  tflite_flutter: 0.12.0
   flutter_widget_from_html: ^0.17.4
   confetti: ^0.8.0
   share_plus: ^13.3.1
