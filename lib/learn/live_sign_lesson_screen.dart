@@ -286,6 +286,9 @@ class _LessonLiveSignScreenState extends State<LessonLiveSignScreen> {
                           confidence: s?.prediction.confidence ?? 0,
                           locked: false,
                           notRecognized: s?.notRecognized ?? false,
+                          handsVisible: (s?.handCount ?? 0) > 0,
+                          bodyVisible: (s?.bodyVisible ?? true) ||
+                              widget.category.id == lettersCategoryId,
                         ),
                       ),
                   ],

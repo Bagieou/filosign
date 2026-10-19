@@ -142,6 +142,9 @@ class _LivePracticeScreenState extends State<LivePracticeScreen> {
                 confidence: s?.prediction.confidence ?? 0,
                 locked: s?.locked ?? false,
                 notRecognized: s?.notRecognized ?? false,
+                handsVisible: (s?.handCount ?? 0) > 0,
+                bodyVisible: (s?.bodyVisible ?? true) ||
+                    widget.category.id == lettersCategoryId,
               ),
             ),
           ),
@@ -222,6 +225,10 @@ class FeedbackBanner extends StatelessWidget {
   final bool locked;
   final String lockedSubtitle;
   final bool notRecognized;
+  /// A hand is in view right now (the user is signing).
+  final bool handsVisible;
+  /// Face and shoulders in view (where the hand is matters for word signs).
+  final bool bodyVisible;
   const FeedbackBanner({
     super.key,
     required this.sign,
@@ -229,7 +236,11 @@ class FeedbackBanner extends StatelessWidget {
     required this.locked,
     this.lockedSubtitle = 'Tap to sign again',
     this.notRecognized = false,
+    this.handsVisible = false,
+    this.bodyVisible = true,
   });
+
+  static const _stepBack = 'Tip: step back so your face and shoulders show';
 
   @override
   Widget build(BuildContext context) {
@@ -239,7 +250,11 @@ class FeedbackBanner extends StatelessWidget {
     if (notRecognized && !locked) {
       color = Colors.blueGrey.shade600;
       title = 'Not recognized';
-      subtitle = 'Do the complete sign clearly, both hands in view';
+      subtitle = bodyVisible ? 'Do the whole sign, then lower your hands' : _stepBack;
+    } else if (sign == null && handsVisible) {
+      color = const Color(0xFF153B39);
+      title = 'Watching…';
+      subtitle = bodyVisible ? 'Finish the sign, then lower your hands' : _stepBack;
     } else if (sign == null) {
       color = const Color(0xFF153B39);
       title = 'Waiting…';

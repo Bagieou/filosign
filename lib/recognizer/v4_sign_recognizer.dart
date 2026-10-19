@@ -131,6 +131,7 @@ class V4SignRecognizer implements SignRecognizer {
       return _last;
     }
     _handsAway = 0;
+    if (_buffer.isEmpty) notRecognized = false; // a new attempt starts
 
     final rawHands = <List<double>>[
       for (final h in hands.take(2))
@@ -256,10 +257,10 @@ class V4SignRecognizer implements SignRecognizer {
   }
 
   /// Not a sign: the model's reject class, a weak raw score, or the three
-  /// models disagreeing. Shows "Not recognized" and clears pending votes, so a
-  /// half-done or random movement can never add up to a lock.
+  /// models disagreeing. Clears pending votes, so a half-done or random
+  /// movement can never add up to a lock. "Not recognized" itself is only
+  /// shown by [_finalDecision]: mid-sign windows often look like a partial sign.
   void _reject(double conf) {
-    notRecognized = true;
     _last = SignPrediction(sign: null, confidence: conf);
     _voteClass.clear();
     _voteConf.clear();
