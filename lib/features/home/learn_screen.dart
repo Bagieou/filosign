@@ -26,12 +26,11 @@ class _LearnScreenState extends State<LearnScreen> {
     _LearnCategory('Communication', 'communication', Icons.emergency_outlined, 10),
   ];
 
-  Map<String, bool> _access = {'basic': true};
-
-  /// Categories we've seen unlock during this app session. Access is
-  /// monotonic, so once it's true it should never flip back to false — even
-  /// if a later [can_access_category] RPC hiccups.
-  final Set<String> _unlockedThisSession = {};
+  /// Seeded from the shared set so a recreated screen starts with everything
+  /// already known to be unlocked.
+  Map<String, bool> _access = {
+    for (final id in unlockedCategories) id: true,
+  };
 
   String? _justUnlocked;
 
@@ -58,24 +57,31 @@ class _LearnScreenState extends State<LearnScreen> {
     final merged = <String, bool>{..._access};
     for (var i = 0; i < _categories.length; i++) {
       final r = results[i];
+      if (r == true) unlockedCategories.add(_categories[i].id); // remember server "true"
       if (r != null) merged[_categories[i].id] = r;
+    }
+    // Pin: never downgrade anything we've seen unlocked.
+    for (final id in unlockedCategories) {
+      merged[id] = true;
     }
     return merged;
   }
 
-  /// Returns null when the RPC fails — callers should keep their previous
-  /// value instead of treating the failure as "locked."
+  /// Returns null when the RPC fails — callers keep their previous value
+  /// instead of treating the failure as "locked."
   Future<bool?> _fetchAccess(int dbId) async {
     if (dbId == kCategoryDbIds['basic']) return true;
     final user = Supabase.instance.client.auth.currentUser;
-    if (user == null) return false;
+    if (user == null) return null; // not signed in yet / session restoring
     try {
       final result = await Supabase.instance.client.rpc(
         'can_access_category',
         params: {'p_user': user.id, 'p_category': dbId},
       );
+      debugPrint('can_access_category($dbId) => $result');
       return _asBool(result);
-    } catch (_) {
+    } catch (e) {
+      debugPrint('can_access_category($dbId) FAILED: $e');
       return null;
     }
   }
@@ -100,13 +106,15 @@ class _LearnScreenState extends State<LearnScreen> {
     } catch (e) {
       debugPrint('quiz route returned unexpected value: $e'); // to be removed
     }
+
+    // Record the unlock BEFORE any mounted check, so it is remembered even if
+    // this screen was disposed while the quiz was open.
+    final next = (result?.nextUnlocked ?? false) ? _nextCategory(c.id) : null;
+    if (next != null) unlockedCategories.add(next.id);
+
     if (!mounted) return;
 
-    final next = (result?.nextUnlocked ?? false) ? _nextCategory(c.id) : null;
-
     if (next != null) {
-      _unlockedThisSession.add(next.id);
-
       await Future.delayed(const Duration(milliseconds: 350));
       if (!mounted) return;
 
@@ -132,16 +140,11 @@ class _LearnScreenState extends State<LearnScreen> {
       });
     }
 
-    // Authoritative re-check, but pinned: nothing unlocked this session is
-    // ever downgraded by a stale or failed read.
+    // Authoritative re-check; _fetchAll applies the pin, so nothing already
+    // unlocked is ever downgraded by a stale or failed read.
     final after = await _fetchAll();
     if (!mounted) return;
-    setState(() {
-      _access = {
-        ...after,
-        for (final id in _unlockedThisSession) id: true,
-      };
-    });
+    setState(() => _access = after);
   }
 
   _LearnCategory? _nextCategory(String id) {
@@ -149,7 +152,7 @@ class _LearnScreenState extends State<LearnScreen> {
     if (i < 0 || i + 1 >= _categories.length) return null;
     return _categories[i + 1];
   }
-  
+
   void _showLockedHint(int index) {
     final prev = _categories[index - 1];
     final c = _categories[index];

@@ -362,11 +362,6 @@ class _HomePageState extends State<HomePage> {
               ],
             ),
           ),
-          const Icon(
-            Icons.chevron_right_rounded,
-            color: Colors.white,
-            size: 28,
-          ),
         ],
       ),
     );

@@ -8,6 +8,11 @@ const kCategoryDetailRoute = 'category_detail';
 /// Bumped after quiz progress changes so other tabs (Practice) reload.
 final ValueNotifier<int> progressVersion = ValueNotifier<int>(0);
 
+/// Learn category ids known to be unlocked. Access is monotonic, so this
+/// lives outside any widget and survives LearnScreen being disposed and
+/// recreated (e.g. when switching bottom-nav tabs).
+final Set<String> unlockedCategories = {'basic'};
+
 /// DB categories.id for each Learn category id (same order as the Learn grid).
 const kCategoryDbIds = <String, int>{
   'basic': 1, 'letters': 2, 'numbers': 3, 'days': 4, 'months': 5, 'colors': 6,
@@ -30,4 +35,3 @@ class QuizResult {
     required this.nextUnlocked,
   });
 }
-
