@@ -243,8 +243,11 @@ class _LiveSignViewState extends State<LiveSignView> with WidgetsBindingObserver
     if (kShowDebugUi) WidgetsBinding.instance.addTimingsCallback(_perf.onTimings);
     _recognizer = V4SignRecognizer(letters: widget.letters)
       ..dominantLeft = widget.dominantLeft;
-    if (!kLiveSignSupported) return; // build() shows the Android-only notice
-    _recognizer.init();
+    if (!kLiveSignSupported) return; // build() shows the unsupported notice
+    // A model that fails to load must show, not leave the screen "watching".
+    _recognizer.init().catchError((Object e) {
+      if (mounted) setState(() => _cameraError = 'Sign models could not load.\n$e');
+    });
     WidgetsBinding.instance.addPostFrameCallback((_) => widget.onRecognizer?.call(_recognizer));
     _setupCamera();
   }
