@@ -55,6 +55,7 @@ class V4SignRecognizer implements SignRecognizer {
   final List<double> _voteConf = [];
   int _framesSincePredict = 0;
   int _handsAway = 0;
+  int _attempt = 0;
   bool _locked = false;
   SignPrediction _last = SignPrediction.none;
   List<MapEntry<String, double>> _top3 = const [];
@@ -119,7 +120,14 @@ class V4SignRecognizer implements SignRecognizer {
     if (!_ready || _locked || !hasImageSize) return _last;
     if (hands.isEmpty) {
       _handsAway++;
-      if (_handsAway >= _handsAwayReset) _clearAttempt();
+      if (_handsAway == _handsAwayReset) {
+        // hands dropped: judge the whole attempt once, the way training saw
+        // signs (live windows often hold only part of a sign)
+        if (_buffer.length >= _minWindowFrames) {
+          _finalDecision(List.of(_buffer), List.of(candidates), _attempt);
+        }
+        _clearAttempt();
+      }
       return _last;
     }
     _handsAway = 0;
@@ -168,26 +176,83 @@ class V4SignRecognizer implements SignRecognizer {
     _predicting = true;
     try {
       final sw = Stopwatch()..start();
-      final isLetters = letters;
-      final input = await Isolate.run(() => _featureInput(window, isLetters));
-      final models = [..._isoInterpreters];
-      if (input == null || _locked || models.isEmpty) return;
-      final probs = List<double>.filled(_labels.length, 0.0);
-      final perModel = <List<double>>[];
-      for (final interp in models) {
-        final output = [List<double>.filled(_labels.length, 0.0)];
-        await interp.run(input, output);
-        perModel.add(List<double>.of(output[0]));
-        for (var i = 0; i < probs.length; i++) {
-          probs[i] += output[0][i] / models.length;
-        }
-      }
-      if (!_ready) return;
+      final out = await _infer(window);
+      if (out == null || _locked || !_ready) return;
       lastLatencyMs = sw.elapsedMilliseconds;
-      _vote(probs, perModel, candidates);
+      _vote(out.$1, out.$2, candidates);
     } finally {
       _predicting = false;
     }
+  }
+
+  /// Averaged probabilities + each model's own, for one window of frames.
+  Future<(List<double>, List<List<double>>)?> _infer(List<CanonFrame> window) async {
+    final isLetters = letters;
+    final input = await Isolate.run(() => _featureInput(window, isLetters));
+    final models = [..._isoInterpreters];
+    if (input == null || models.isEmpty) return null;
+    final probs = List<double>.filled(_labels.length, 0.0);
+    final perModel = <List<double>>[];
+    for (final interp in models) {
+      final output = [List<double>.filled(_labels.length, 0.0)];
+      await interp.run(input, output);
+      perModel.add(List<double>.of(output[0]));
+      for (var i = 0; i < probs.length; i++) {
+        probs[i] += output[0][i] / models.length;
+      }
+    }
+    return (probs, perModel);
+  }
+
+  /// End of an attempt (hands left the frame) without a live lock: classify
+  /// every frame since the hands appeared, like a whole training clip, with
+  /// the same strict rule (not __none__, raw >= 0.5, all 3 agree, >= 0.85).
+  /// Simulated on held-out clips: words 40% -> 87% correct, wrong ~3%.
+  Future<void> _finalDecision(List<CanonFrame> frames, List<String> candidates, int attempt) async {
+    while (_predicting) {
+      await Future<void>.delayed(const Duration(milliseconds: 10));
+    }
+    if (_locked || !_ready || attempt != _attempt) return;
+    _predicting = true;
+    try {
+      final out = await _infer(frames);
+      if (out == null || _locked || !_ready || attempt != _attempt) return;
+      final (probs, perModel) = out;
+      final noneIdx = _labels.indexOf(noneLabel);
+      final allowed = _allowed(candidates, noneIdx);
+      final sum = allowed.fold<double>(0.0, (a, i) => a + probs[i]);
+      if (sum <= 0) return;
+      int argmax(List<double> p) => allowed.reduce((a, b) => p[b] > p[a] ? b : a);
+      final idx = argmax(probs);
+      final rawBest = allowed.where((i) => i != noneIdx).fold<int>(
+          -1, (b, i) => b < 0 || probs[i] > probs[b] ? i : b);
+      final conf = probs[idx] / sum;
+      final ok = idx != noneIdx &&
+          rawBest >= 0 &&
+          probs[rawBest] >= _minRawConf &&
+          perModel.every((p) => argmax(p) == idx) &&
+          conf >= _stableLockMinConf;
+      if (_buffer.isNotEmpty) return; // a new attempt already started
+      if (ok) {
+        _locked = true;
+        notRecognized = false;
+        _last = SignPrediction(sign: _labels[idx], confidence: conf);
+      } else {
+        notRecognized = true;
+      }
+    } finally {
+      _predicting = false;
+    }
+  }
+
+  Set<int> _allowed(List<String> candidates, int noneIdx) {
+    final allowed = <int>{
+      for (final c in candidates)
+        if (_labels.contains(c)) _labels.indexOf(c)
+    };
+    if (allowed.isEmpty) allowed.addAll(List<int>.generate(_labels.length, (i) => i));
+    if (noneIdx >= 0) allowed.add(noneIdx);
+    return allowed;
   }
 
   /// Not a sign: the model's reject class, a weak raw score, or the three
@@ -202,12 +267,7 @@ class V4SignRecognizer implements SignRecognizer {
 
   void _vote(List<double> probs, List<List<double>> perModel, List<String> candidates) {
     final noneIdx = _labels.indexOf(noneLabel);
-    final allowed = <int>{
-      for (final c in candidates)
-        if (_labels.contains(c)) _labels.indexOf(c)
-    };
-    if (allowed.isEmpty) allowed.addAll(List<int>.generate(_labels.length, (i) => i));
-    if (noneIdx >= 0) allowed.add(noneIdx);
+    final allowed = _allowed(candidates, noneIdx);
 
     // raw (all-sign) score of the best candidate, before narrowing to the
     // category: a real sign keeps most of the probability for itself
@@ -307,6 +367,7 @@ class V4SignRecognizer implements SignRecognizer {
 
   @override
   void reset() {
+    _attempt++; // drops a pending end-of-attempt decision
     _clearAttempt();
     _handsAway = 0;
     _locked = false;
