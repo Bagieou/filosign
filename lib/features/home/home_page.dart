@@ -13,6 +13,8 @@ import 'settings_page.dart';
 import 'learn_screen.dart';
 import 'search_results_screen.dart';
 import 'package:filosign/learn/category.dart';
+import 'package:filosign/features/quiz/quiz_home_screen.dart';
+import 'package:filosign/test_build.dart';
 
 class CurrentLessonData {
   final LearnCategory category;
@@ -265,6 +267,20 @@ class _HomePageState extends State<HomePage> {
               ),
             ],
           ),
+          if (kTestBuild) ...[
+            // test version: any category's quiz, without the lessons first
+            const SizedBox(height: 14),
+            _buildActionButton(
+              icon: Icons.quiz_rounded,
+              title: 'Quiz',
+              subtitle: 'Any category',
+              color: const Color(0xFF4F6BED),
+              onTap: () => Navigator.push(
+                context,
+                MaterialPageRoute(builder: (_) => const QuizHomeScreen()),
+              ),
+            ),
+          ],
           const SizedBox(height: 28),
           const Text(
             'Continue where you left off',

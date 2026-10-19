@@ -12,12 +12,14 @@ import 'package:flutter_pose_detection/flutter_pose_detection.dart';
 import 'package:hand_landmarker/hand_landmarker.dart';
 
 import '../../recognizer/sign_recognizer.dart';
+import '../../test_build.dart';
 import '../../recognizer/v4_sign_recognizer.dart';
 
 /// Developer overlays (top-3, hand count, debug capture button).
 /// Off in normal builds; turn on with
 /// `flutter build apk --dart-define=FILOSIGN_DEBUG_UI=true`.
-const bool kShowDebugUi = bool.fromEnvironment('FILOSIGN_DEBUG_UI');
+/// The team test version (kTestBuild) shows them too, for reporting.
+const bool kShowDebugUi = bool.fromEnvironment('FILOSIGN_DEBUG_UI') || kTestBuild;
 
 /// Live sign checking runs MediaPipe Hands natively: Android (JNI plugin) and
 /// iOS (MediaPipeTasksVision, packages/hand_landmarker/ios). Anywhere else

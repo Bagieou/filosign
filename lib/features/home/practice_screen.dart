@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
 import 'package:filosign/learn/learn_routes.dart';
+import 'package:filosign/test_build.dart';
 import '../../learn/learn_repository.dart';
 import '../practice/live_practice_screen.dart';
 
@@ -70,8 +71,9 @@ class _PracticeScreenState extends State<PracticeScreen> {
 
   List<_PracticeCategory> get _visible => [
         for (final c in _categories)
-          if (_progress.containsKey(kCategoryDbIds[c.id]) &&
-              (!_passedOnly || _progress[kCategoryDbIds[c.id]] == true))
+          if (kTestBuild ||
+              (_progress.containsKey(kCategoryDbIds[c.id]) &&
+                  (!_passedOnly || _progress[kCategoryDbIds[c.id]] == true)))
             c,
       ];
 

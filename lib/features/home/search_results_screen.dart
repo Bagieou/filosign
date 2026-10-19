@@ -5,6 +5,7 @@ import 'package:filosign/learn/lesson_player_screen.dart';
 import 'package:filosign/learn/category.dart';
 import 'package:filosign/learn/lesson.dart';
 import 'package:filosign/learn/learn_routes.dart';
+import 'package:filosign/test_build.dart';
 
 class SearchResultsScreen extends StatefulWidget {
   final String query;
@@ -56,7 +57,7 @@ class _SearchResultsScreenState extends State<SearchResultsScreen> {
   }
 
   Future<bool> _fetchAccess(String categoryId) async {
-    if (categoryId == 'basic') return true;
+    if (kTestBuild || categoryId == 'basic') return true;
     final dbId = kCategoryDbIds[categoryId];
     if (dbId == null) return false;
     final user = Supabase.instance.client.auth.currentUser;

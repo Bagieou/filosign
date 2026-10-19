@@ -102,7 +102,13 @@ jobs:
           pod install --repo-update
 
       - name: Build iOS (unsigned)
-        run: flutter build ios --release --no-codesign --no-pub
+        run: |
+          # branches named *test* build the team test version (all categories open,
+          # Quiz card, Top-3 panel): see lib/test_build.dart
+          DEFINES=""
+          case "$GITHUB_REF_NAME" in *test*) DEFINES="--dart-define=FILOSIGN_TEST_BUILD=true";; esac
+          echo "dart defines: $DEFINES"
+          flutter build ios --release --no-codesign --no-pub $DEFINES
 
       - name: Manually Package App Payload
         run: |

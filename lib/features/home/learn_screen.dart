@@ -3,6 +3,7 @@ import 'package:flutter/services.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:filosign/learn/category_detail_screen.dart';
 import 'package:filosign/learn/learn_routes.dart';
+import 'package:filosign/test_build.dart';
 
 class LearnScreen extends StatefulWidget {
   const LearnScreen({super.key});
@@ -30,6 +31,8 @@ class _LearnScreenState extends State<LearnScreen> {
   /// already known to be unlocked.
   Map<String, bool> _access = {
     for (final id in unlockedCategories) id: true,
+    if (kTestBuild)
+      for (final c in _categories) c.id: true,
   };
 
   String? _justUnlocked;
@@ -70,7 +73,7 @@ class _LearnScreenState extends State<LearnScreen> {
   /// Returns null when the RPC fails — callers keep their previous value
   /// instead of treating the failure as "locked."
   Future<bool?> _fetchAccess(int dbId) async {
-    if (dbId == kCategoryDbIds['basic']) return true;
+    if (kTestBuild || dbId == kCategoryDbIds['basic']) return true;
     final user = Supabase.instance.client.auth.currentUser;
     if (user == null) return null; // not signed in yet / session restoring
     try {
