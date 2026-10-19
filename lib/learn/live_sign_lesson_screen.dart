@@ -74,7 +74,8 @@ class _LessonLiveSignScreenState extends State<LessonLiveSignScreen> {
   int _wrongLocks = 0;
 
   bool get _hintAvailable => _wrongLocks >= hintAfterWrong || _hintByTime;
-  bool get _skipAvailable => _wrongLocks >= skipAfterWrong || _skipByTime;
+  bool get _skipAvailable =>
+      !kLiveSignSupported || _wrongLocks >= skipAfterWrong || _skipByTime;
 
  @override
   void initState() {

@@ -203,6 +203,8 @@ class Top3Panel extends StatelessWidget {
               style: const TextStyle(color: Colors.white70, fontSize: 11)),
           Text('hands: ${p[0] ? 'dominant' : '-'} / ${p[1] ? 'other' : '-'} · body: ${state.bodyVisible ? 'yes' : 'NO'}',
               style: const TextStyle(color: Colors.white70, fontSize: 11)),
+          if (state.perf.isNotEmpty)
+            Text(state.perf, style: const TextStyle(color: Colors.white70, fontSize: 11)),
           for (var i = 0; i < state.top3.length; i++)
             Text(
               '${i + 1}. ${titleOf(state.top3[i].key)}  ${(state.top3[i].value * 100).round()}%',

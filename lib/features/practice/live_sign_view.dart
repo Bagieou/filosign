@@ -1,9 +1,13 @@
 import 'dart:async';
+import 'dart:io' show Platform;
 import 'dart:math' as math;
+import 'dart:typed_data';
+import 'dart:ui' show FrameTiming;
 
 import 'package:camera/camera.dart';
 import 'package:flutter/foundation.dart' show ValueListenable;
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart' show MethodChannel;
 import 'package:flutter_pose_detection/flutter_pose_detection.dart';
 import 'package:hand_landmarker/hand_landmarker.dart';
 
@@ -14,6 +18,123 @@ import '../../recognizer/v4_sign_recognizer.dart';
 /// Off in normal builds; turn on with
 /// `flutter build apk --dart-define=FILOSIGN_DEBUG_UI=true`.
 const bool kShowDebugUi = bool.fromEnvironment('FILOSIGN_DEBUG_UI');
+
+/// Live sign checking runs MediaPipe Hands natively: Android (JNI plugin) and
+/// iOS (MediaPipeTasksVision, packages/hand_landmarker/ios). Anywhere else
+/// the screens show a notice, offer Skip, and keep the quiz to video questions.
+final bool kLiveSignSupported = Platform.isAndroid || Platform.isIOS;
+
+/// Debug builds only: camera / hand-result rates and UI frame cost, shown in
+/// the Top-3 panel and logged as "FILOSIGN_PERF" (adb logcat) every 2 s.
+class _PerfMeter {
+  int camera = 0, hands = 0, frames = 0, slow = 0, pose = 0;
+  int buildUs = 0, rasterUs = 0, camCbUs = 0, handCbUs = 0;
+  int _since = DateTime.now().millisecondsSinceEpoch;
+  String text = '';
+
+  void onTimings(List<FrameTiming> timings) {
+    for (final t in timings) {
+      final b = t.buildDuration.inMicroseconds, r = t.rasterDuration.inMicroseconds;
+      frames++;
+      buildUs += b;
+      rasterUs += r;
+      if (b > 16667 || r > 16667) slow++;
+    }
+  }
+
+  void tick(int inferMs) {
+    final now = DateTime.now().millisecondsSinceEpoch;
+    final s = (now - _since) / 1000.0;
+    if (s < 2) return;
+    String ms(int us, int n) => n == 0 ? '0' : (us / n / 1000).toStringAsFixed(1);
+    text = 'cam ${(camera / s).round()}/s · hands ${(hands / s).round()}/s · pose ${(pose / s).round()}/s · '
+        'ui ${(frames / s).round()}fps build ${ms(buildUs, frames)} raster ${ms(rasterUs, frames)}ms '
+        'slow $slow · camCb ${ms(camCbUs, camera)} handCb ${ms(handCbUs, hands)}ms · model ${inferMs}ms';
+    debugPrint('FILOSIGN_PERF $text');
+    camera = hands = frames = slow = pose = buildUs = rasterUs = camCbUs = handCbUs = 0;
+    _since = now;
+  }
+}
+
+/// One hand landmarker + one pose detector for the whole app session.
+/// Creating the hand landmarker loads its model on the GPU on the calling
+/// (UI) thread - a 1-2 s freeze that made every screen transition stutter -
+/// and the plugin shares one event channel between instances, so a second
+/// instance's dispose killed the first one's stream. Now: created once, kept,
+/// and its results fanned out to whichever camera view is open.
+class _SharedDetectors {
+  static HandLandmarkerPlugin? _android;
+  static const MethodChannel _ios = MethodChannel('filosign/hands_ios');
+  static Future<void>? _iosInit;
+  static bool _iosBusy = false;
+  static bool _started = false;
+  static final StreamController<List<Hand>> _results = StreamController.broadcast();
+  static final NpuPoseDetector pose = NpuPoseDetector(config: PoseDetectorConfig.realtime());
+  static Future<void>? _poseInit;
+
+  /// Creates the hand detector on first use (Android: blocking GPU load).
+  static void start() {
+    if (_started) return;
+    if (Platform.isIOS) {
+      _iosInit = _ios.invokeMethod<void>('initialize');
+    } else {
+      final created = HandLandmarkerPlugin.create(
+        numHands: 2,
+        minHandDetectionConfidence: 0.5,
+        delegate: HandLandmarkerDelegate.gpu,
+      );
+      created.landmarkStream.listen(_results.add, onError: (_) {});
+      _android = created;
+    }
+    _started = true;
+  }
+
+  static Stream<List<Hand>> get results => _results.stream;
+
+  /// Cheap on the UI thread: Android converts + detects on a native worker;
+  /// iOS sends the BGRA frame and skips frames while one is in flight.
+  static void processFrame(CameraImage image, int orientation) {
+    if (Platform.isIOS) {
+      _processIos(image);
+    } else {
+      _android?.processFrame(image, orientation);
+    }
+  }
+
+  static Future<void> _processIos(CameraImage image) async {
+    if (_iosBusy) return;
+    _iosBusy = true;
+    try {
+      await _iosInit;
+      final p = image.planes.first;
+      final res = await _ios.invokeMethod<List<Object?>>('process', {
+        'bytes': p.bytes,
+        'width': image.width,
+        'height': image.height,
+        'bytesPerRow': p.bytesPerRow,
+        'ts': DateTime.now().millisecondsSinceEpoch,
+      });
+      _results.add([
+        for (final h in res ?? const <Object?>[])
+          Hand([
+            for (var i = 0; i + 2 < (h as List).length; i += 3)
+              Landmark((h[i] as num).toDouble(), (h[i + 1] as num).toDouble(),
+                  (h[i + 2] as num).toDouble()),
+          ]),
+      ]);
+    } catch (e) {
+      if (kShowDebugUi) debugPrint('FILOSIGN_IOS_HANDS $e');
+    } finally {
+      _iosBusy = false;
+    }
+  }
+
+  static Future<void> initPose() =>
+      _poseInit ??= pose.initialize().catchError((Object e) {
+        _poseInit = null;
+        throw e;
+      });
+}
 
 /// Snapshot of the live recognizer, sent to the parent after every frame.
 class LiveSignState {
@@ -26,6 +147,8 @@ class LiveSignState {
   final List<bool> present;
   final bool notRecognized;
   final bool bodyVisible;
+  /// Debug builds: performance readout (see [_PerfMeter]).
+  final String perf;
   const LiveSignState({
     required this.prediction,
     required this.locked,
@@ -36,6 +159,7 @@ class LiveSignState {
     required this.present,
     this.notRecognized = false,
     this.bodyVisible = true,
+    this.perf = '',
   });
 }
 
@@ -97,53 +221,50 @@ class _LiveSignViewState extends State<LiveSignView> with WidgetsBindingObserver
     } catch (_) {}
   }
 
-  HandLandmarkerPlugin? _landmarker;
+  bool _detectorsReady = false;
   StreamSubscription<List<Hand>>? _landmarkSub;
   /// Latest hands for the overlay: repaints only the painter, not the preview.
   final ValueNotifier<List<Hand>> _hands = ValueNotifier(const []);
-  /// One hand frame in flight at a time: sending every frame regardless let
-  /// a queue build up, so the landmarks lagged behind the video ("ghosting").
-  bool _handBusy = false;
-  int _handSentMs = 0;
 
-  final NpuPoseDetector _pose =
-      NpuPoseDetector(config: PoseDetectorConfig.realtime());
+  NpuPoseDetector get _pose => _SharedDetectors.pose;
   bool _poseReady = false;
   bool _poseBusy = false;
   List<PoseLandmark> _latestPose = const [];
 
   late final V4SignRecognizer _recognizer;
+  final _PerfMeter _perf = _PerfMeter();
 
   @override
   void initState() {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
+    if (kShowDebugUi) WidgetsBinding.instance.addTimingsCallback(_perf.onTimings);
     _recognizer = V4SignRecognizer(letters: widget.letters)
       ..dominantLeft = widget.dominantLeft;
+    if (!kLiveSignSupported) return; // build() shows the Android-only notice
     _recognizer.init();
     WidgetsBinding.instance.addPostFrameCallback((_) => widget.onRecognizer?.call(_recognizer));
     _setupCamera();
   }
 
-  /// Native detectors are created only after the previous view's teardown:
-  /// the hand plugin shares one event channel between instances, so creating
-  /// before the old one is disposed killed the new stream.
+  /// Hooks this view up to the shared detectors (created on first use only).
   void _createDetectors() {
     if (!widget.letters) { // the letters model doesn't use the body
-      _pose.initialize().then((_) {
+      _SharedDetectors.initPose().then((_) {
         if (mounted && !_disposed) _poseReady = true;
       }).catchError((_) {});
     }
-    _landmarker = HandLandmarkerPlugin.create(
-      numHands: 2,
-      minHandDetectionConfidence: 0.5,
-      delegate: HandLandmarkerDelegate.gpu,
-    );
-    _landmarkSub = _landmarker!.landmarkStream.listen((hands) {
-      _handBusy = false;
+    _SharedDetectors.start();
+    _detectorsReady = true;
+    _landmarkSub = _SharedDetectors.results.listen((hands) {
       if (!mounted || _disposed || !widget.active) return;
+      final sw = kShowDebugUi ? (Stopwatch()..start()) : null;
       final p = _recognizer.addFrame(hands, _latestPose, widget.candidates);
       _hands.value = hands;
+      if (sw != null) {
+        _perf.hands++;
+        _perf.handCbUs += sw.elapsedMicroseconds;
+      }
       // The parent rebuilds on every update; ~8 per second is plenty for the
       // text and keeps the UI thread free (lock changes go out at once).
       final now = DateTime.now().millisecondsSinceEpoch;
@@ -161,6 +282,7 @@ class _LiveSignViewState extends State<LiveSignView> with WidgetsBindingObserver
         present: _recognizer.lastPresent,
         notRecognized: _recognizer.notRecognized,
         bodyVisible: _recognizer.lastPoseOk,
+        perf: _perf.text,
       ));
     });
   }
@@ -183,6 +305,21 @@ class _LiveSignViewState extends State<LiveSignView> with WidgetsBindingObserver
     }
   }
 
+  Future<void> _routeSettled() async {
+    if (!mounted) return;
+    final anim = ModalRoute.of(context)?.animation;
+    if (anim == null || anim.isCompleted) return;
+    final done = Completer<void>();
+    void onStatus(AnimationStatus s) {
+      if (!s.isAnimating && !done.isCompleted) done.complete();
+    }
+    anim.addStatusListener(onStatus);
+    try {
+      await done.future.timeout(const Duration(seconds: 2));
+    } catch (_) {}
+    anim.removeStatusListener(onStatus);
+  }
+
   Future<void> _setupCamera() async {
     // A replaced view is disposed at the END of the frame that mounts this
     // one, so wait for that frame before reading the teardown queue.
@@ -191,8 +328,18 @@ class _LiveSignViewState extends State<LiveSignView> with WidgetsBindingObserver
     try {
       await _lastTeardown.timeout(const Duration(seconds: 3));
     } catch (_) {}
+    // Start the camera + detectors only once the page has finished sliding
+    // in: doing it during the animation made the transition stutter.
+    await _routeSettled();
     if (!mounted || _disposed) return;
-    if (_landmarker == null) _createDetectors();
+    if (!_detectorsReady) {
+      try {
+        _createDetectors();
+      } catch (e) {
+        if (mounted) setState(() => _cameraError = 'Hand detection could not start.\n$e');
+        return;
+      }
+    }
     try {
       final cameras = await availableCameras();
       if (cameras.isEmpty) {
@@ -209,7 +356,9 @@ class _LiveSignViewState extends State<LiveSignView> with WidgetsBindingObserver
         // tracking dropped frames (teammate debug captures); training was 720p.
         ResolutionPreset.medium,
         enableAudio: false,
-        imageFormatGroup: ImageFormatGroup.yuv420,
+        // iOS streams BGRA (what MediaPipe / the pose plugin take there)
+        imageFormatGroup:
+            Platform.isIOS ? ImageFormatGroup.bgra8888 : ImageFormatGroup.yuv420,
       );
       await controller.initialize();
       if (!mounted) {
@@ -229,8 +378,7 @@ class _LiveSignViewState extends State<LiveSignView> with WidgetsBindingObserver
 
   Future<void> _startStream() async {
     final controller = _controller;
-    final landmarker = _landmarker;
-    if (controller == null || landmarker == null || _streaming) return;
+    if (controller == null || !_detectorsReady || _streaming) return;
     // Flip before the await so _setupCamera and didUpdateWidget can't both
     // enter and trigger "already streaming".
     _streaming = true;
@@ -238,23 +386,29 @@ class _LiveSignViewState extends State<LiveSignView> with WidgetsBindingObserver
       final orientation = controller.description.sensorOrientation;
       await controller.startImageStream((CameraImage image) {
         if (_disposed || !widget.active) return;
+        final camSw = kShowDebugUi ? (Stopwatch()..start()) : null;
+        if (kShowDebugUi) {
+          _perf.camera++;
+          _perf.tick(_recognizer.lastLatencyMs);
+        }
         if (!_recognizer.hasImageSize) {
+          // iOS frames arrive upright and (front camera) mirrored; Android
+          // frames arrive in sensor orientation, un-mirrored.
           _recognizer.configureCamera(
-              sensorOrientation: orientation,
+              sensorOrientation: Platform.isIOS ? 0 : orientation,
               imageWidth: image.width,
-              imageHeight: image.height);
+              imageHeight: image.height,
+              mirrored: Platform.isIOS &&
+                  controller.description.lensDirection == CameraLensDirection.front);
         }
         final now = DateTime.now().millisecondsSinceEpoch;
-        // next frame only once the previous result is back (or lost: 300 ms)
-        if (now - _lastSentMs >= 33 && (!_handBusy || now - _handSentMs > 300)) {
+        // Cheap here: both platforms detect off the UI thread and drop frames
+        // while busy, so nothing queues up.
+        if (now - _lastSentMs >= 33) {
           _lastSentMs = now;
-          _handSentMs = now;
-          _handBusy = true;
           try {
-            landmarker.processFrame(image, orientation);
-          } catch (_) {
-            _handBusy = false;
-          }
+            _SharedDetectors.processFrame(image, orientation);
+          } catch (_) {}
         }
         // Pose frames are copied over the platform channel; 5 per second keeps
         // the UI thread responsive (the recognizer reuses the latest pose).
@@ -262,6 +416,7 @@ class _LiveSignViewState extends State<LiveSignView> with WidgetsBindingObserver
           _lastPoseMs = now;
           _feedPose(image, orientation);
         }
+        if (camSw != null) _perf.camCbUs += camSw.elapsedMicroseconds;
       });
     } catch (_) {
       _streaming = false;
@@ -272,22 +427,16 @@ class _LiveSignViewState extends State<LiveSignView> with WidgetsBindingObserver
     if (!_poseReady || _poseBusy) return;
     _poseBusy = true;
     try {
-      final planes = [
-        for (final p in image.planes)
-          {
-            'bytes': p.bytes,
-            'bytesPerRow': p.bytesPerRow,
-            'bytesPerPixel': p.bytesPerPixel ?? 1,
-          }
-      ];
+      final half = Platform.isIOS ? _halfSizeBgra(image) : _halfSizeI420(image);
       final res = await _pose.processFrame(
-        planes: planes,
-        width: image.width,
-        height: image.height,
-        format: 'yuv420',
-        rotation: orientation,
+        planes: half.planes,
+        width: half.width,
+        height: half.height,
+        format: Platform.isIOS ? 'bgra8888' : 'yuv420',
+        rotation: Platform.isIOS ? 0 : orientation,
       );
       if (_disposed) return;
+      if (kShowDebugUi) _perf.pose++;
       // Keep the last good pose for a moment when one detection fails, so the
       // body location doesn't flicker on and off (training always had it).
       final now = DateTime.now().millisecondsSinceEpoch;
@@ -301,6 +450,69 @@ class _LiveSignViewState extends State<LiveSignView> with WidgetsBindingObserver
     } finally {
       _poseBusy = false;
     }
+  }
+
+  /// Half-size, tightly packed Y/U/V planes for the pose plugin. The plugin
+  /// base64-encodes every plane on the UI thread and its native side ignores
+  /// row/pixel strides (it assumes packed planes - interleaved camera chroma
+  /// came out scrambled). Its model sees a 256 px image anyway, so half size
+  /// (320x240) loses nothing and is 4x less work.
+  static ({List<Map<String, dynamic>> planes, int width, int height}) _halfSizeI420(
+      CameraImage img) {
+    final w = (img.width ~/ 2) & ~1, h = (img.height ~/ 2) & ~1;
+    final yp = img.planes[0], up = img.planes[1], vp = img.planes[2];
+    final y = Uint8List(w * h);
+    for (var r = 0; r < h; r++) {
+      final src = 2 * r * yp.bytesPerRow, dst = r * w;
+      for (var c = 0; c < w; c++) {
+        y[dst + c] = yp.bytes[src + 2 * c];
+      }
+    }
+    final cw = w ~/ 2, ch = h ~/ 2;
+    final ps = up.bytesPerPixel ?? 1;
+    final u = Uint8List(cw * ch), v = Uint8List(cw * ch);
+    for (var r = 0; r < ch; r++) {
+      final su = 2 * r * up.bytesPerRow, sv = 2 * r * vp.bytesPerRow, dst = r * cw;
+      for (var c = 0; c < cw; c++) {
+        u[dst + c] = up.bytes[su + 2 * c * ps];
+        v[dst + c] = vp.bytes[sv + 2 * c * ps];
+      }
+    }
+    return (
+      planes: [
+        {'bytes': y, 'bytesPerRow': w, 'bytesPerPixel': 1},
+        {'bytes': u, 'bytesPerRow': cw, 'bytesPerPixel': 1},
+        {'bytes': v, 'bytesPerRow': cw, 'bytesPerPixel': 1},
+      ],
+      width: w,
+      height: h,
+    );
+  }
+
+  /// iOS: half-size packed BGRA (the iOS pose plugin copies one packed
+  /// plane into a pixel buffer and ignores the row stride).
+  static ({List<Map<String, dynamic>> planes, int width, int height}) _halfSizeBgra(
+      CameraImage img) {
+    final w = (img.width ~/ 2) & ~1, h = (img.height ~/ 2) & ~1;
+    final src = img.planes[0].bytes, row = img.planes[0].bytesPerRow;
+    final out = Uint8List(w * h * 4);
+    for (var r = 0; r < h; r++) {
+      final s = 2 * r * row, d = r * w * 4;
+      for (var c = 0; c < w; c++) {
+        final si = s + 8 * c, di = d + 4 * c;
+        out[di] = src[si];
+        out[di + 1] = src[si + 1];
+        out[di + 2] = src[si + 2];
+        out[di + 3] = src[si + 3];
+      }
+    }
+    return (
+      planes: [
+        {'bytes': out, 'bytesPerRow': w * 4, 'bytesPerPixel': 4},
+      ],
+      width: w,
+      height: h,
+    );
   }
 
   Future<void> _stopStream([CameraController? c]) async {
@@ -327,7 +539,7 @@ class _LiveSignViewState extends State<LiveSignView> with WidgetsBindingObserver
         await _quiet(controller.dispose);
       });
     } else if (state == AppLifecycleState.resumed) {
-      if (_controller == null && !_disposed) _setupCamera();
+      if (_controller == null && !_disposed && kLiveSignSupported) _setupCamera();
     }
   }
 
@@ -335,6 +547,7 @@ class _LiveSignViewState extends State<LiveSignView> with WidgetsBindingObserver
   void dispose() {
     _disposed = true;
     WidgetsBinding.instance.removeObserver(this);
+    if (kShowDebugUi) WidgetsBinding.instance.removeTimingsCallback(_perf.onTimings);
     _landmarkSub?.cancel();
     _enqueue(_teardown);
     _hands.dispose();
@@ -353,12 +566,32 @@ class _LiveSignViewState extends State<LiveSignView> with WidgetsBindingObserver
     }
     await _quiet(_recognizer.dispose);
     await _quiet(() => controller?.dispose());
-    await _quiet(() => _landmarker?.dispose());
-    await _quiet(_pose.dispose);
+    // the hand landmarker and pose detector are shared (_SharedDetectors)
   }
 
   @override
   Widget build(BuildContext context) {
+    if (!kLiveSignSupported) {
+      return const Center(
+        child: Padding(
+          padding: EdgeInsets.all(28),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Icon(Icons.phone_android, color: Colors.white70, size: 44),
+              SizedBox(height: 12),
+              Text('Live sign checking is available on Android only for now.',
+                  textAlign: TextAlign.center,
+                  style: TextStyle(color: Colors.white, fontSize: 16, fontWeight: FontWeight.w700)),
+              SizedBox(height: 6),
+              Text('You can skip this step and keep learning with the videos.',
+                  textAlign: TextAlign.center,
+                  style: TextStyle(color: Colors.white70, fontSize: 13)),
+            ],
+          ),
+        ),
+      );
+    }
     if (_cameraError != null) {
       return Center(
         child: Padding(
@@ -434,16 +667,21 @@ class _HandOverlayPainter extends CustomPainter {
   void paint(Canvas canvas, Size size) {
     final hands = this.hands.value;
     if (hands.isEmpty) return;
-    final scale = size.width / previewSize.height;
+    // iOS landmarks come from the same upright (mirrored) frames the preview
+    // shows; Android ones are in sensor orientation and need the transform.
+    final upright = Platform.isIOS;
+    final scale = upright ? 1.0 : size.width / previewSize.height;
     if (scale <= 0 || scale.isNaN || scale.isInfinite) return;
     canvas.save();
     canvas.translate(size.width / 2, size.height / 2);
-    canvas.rotate(sensorOrientation * math.pi / 180);
-    if (isFront) {
-      canvas.scale(-1, 1);
-      canvas.rotate(math.pi);
+    if (!upright) {
+      canvas.rotate(sensorOrientation * math.pi / 180);
+      if (isFront) {
+        canvas.scale(-1, 1);
+        canvas.rotate(math.pi);
+      }
+      canvas.scale(scale);
     }
-    canvas.scale(scale);
     final pointPaint = Paint()
       ..color = const Color(0xFF5EEAD4)
       ..style = PaintingStyle.fill;
@@ -452,8 +690,9 @@ class _HandOverlayPainter extends CustomPainter {
       ..strokeWidth = 3 / scale
       ..style = PaintingStyle.stroke;
     final r = 5 / scale;
-    Offset pt(Landmark lm) =>
-        Offset((lm.x - 0.5) * previewSize.width, (lm.y - 0.5) * previewSize.height);
+    Offset pt(Landmark lm) => upright
+        ? Offset((lm.x - 0.5) * size.width, (lm.y - 0.5) * size.height)
+        : Offset((lm.x - 0.5) * previewSize.width, (lm.y - 0.5) * previewSize.height);
     for (final hand in hands) {
       if (hand.landmarks.length < 21) continue;
       for (final c in _connections) {

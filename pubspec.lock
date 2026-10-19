@@ -456,10 +456,9 @@ packages:
   hand_landmarker:
     dependency: "direct main"
     description:
-      name: hand_landmarker
-      sha256: "6eb2765b300c6e9635f6d527698de33bb079a270e645a13e091e447a6e69a80e"
-      url: "https://pub.dev"
-    source: hosted
+      path: "packages/hand_landmarker"
+      relative: true
+    source: path
     version: "3.1.0"
   hooks:
     dependency: transitive

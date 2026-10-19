@@ -72,7 +72,10 @@ class _QuizScreenState extends State<QuizScreen> {
     while (picks.length < n) {
       picks.addAll([...pool]..shuffle(_rng));
     }
-    final types = [for (var i = 0; i < n; i++) i < n ~/ 2]..shuffle(_rng);
+    // half live-camera, half video questions (video only where live sign
+    // checking isn't available, i.e. iOS)
+    final types = [for (var i = 0; i < n; i++) kLiveSignSupported && i < n ~/ 2]
+      ..shuffle(_rng);
     return [
       for (var i = 0; i < n; i++)
         _Question(

@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import 'features/auth/auth_page.dart';
+import 'features/practice/live_sign_view.dart' show kLiveSignSupported;
 import 'recognizer/v4_sign_recognizer.dart';
 
 void main() async {
@@ -12,7 +13,9 @@ void main() async {
   runApp(const MainApp());
   // warm up the sign models after the first screen is up, so the camera
   // screens open without a loading pause
-  Future.delayed(const Duration(seconds: 2), V4SignRecognizer.preload);
+  if (kLiveSignSupported) {
+    Future.delayed(const Duration(seconds: 2), V4SignRecognizer.preload);
+  }
 }
 
 final supabase = Supabase.instance.client;

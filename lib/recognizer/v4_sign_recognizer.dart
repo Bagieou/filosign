@@ -1,6 +1,7 @@
 import 'dart:convert';
 import 'dart:isolate';
 
+import 'package:flutter/foundation.dart' show debugPrint;
 import 'package:flutter/services.dart' show rootBundle;
 import 'package:flutter_pose_detection/flutter_pose_detection.dart';
 import 'package:hand_landmarker/hand_landmarker.dart';
@@ -17,6 +18,8 @@ import 'v4/features_v4.dart';
 /// Same lock rule as before: a class must dominate recent votes at >= 0.85.
 class V4SignRecognizer implements SignRecognizer {
   static const int seqLen = 30;
+  /// Debug builds (--dart-define=FILOSIGN_DEBUG_UI=true): log every decision.
+  static const bool _log = bool.fromEnvironment('FILOSIGN_DEBUG_UI');
   static const int _predictEveryN = 5;
   static const int _handsAwayReset = 10;
   static const int _bufferMaxMs = 5000;
@@ -31,7 +34,7 @@ class V4SignRecognizer implements SignRecognizer {
   static const double _minMargin = 0.25;
   /// Minimum probability the best sign must have among ALL signs (before the
   /// category filter). Random movements spread probability thin.
-  static const double _minRawConf = 0.5;
+  static const double _minRawConf = 0.2;
   /// Reject ("not a sign") class name in the label files.
   static const String noneLabel = '__none__';
   /// True when the latest prediction was rejected (show "Not recognized").
@@ -47,6 +50,7 @@ class V4SignRecognizer implements SignRecognizer {
   bool _ready = false;
 
   int _sensorOrientation = 0;
+  bool _mirrored = false;
   double _imgW = 0, _imgH = 0; // upright image size
   bool dominantLeft = false;
 
@@ -79,7 +83,16 @@ class V4SignRecognizer implements SignRecognizer {
   bool get isReady => _ready;
 
   /// [imageWidth]/[imageHeight] are the CameraImage size (sensor orientation).
-  void configureCamera({required int sensorOrientation, int? imageWidth, int? imageHeight}) {
+  /// [mirrored]: frames come mirrored like a selfie (iOS front camera); the
+  /// landmarks are flipped back so the model sees the real-world view it was
+  /// trained on (Android delivers un-mirrored sensor frames).
+  void configureCamera({
+    required int sensorOrientation,
+    int? imageWidth,
+    int? imageHeight,
+    bool mirrored = false,
+  }) {
+    _mirrored = mirrored;
     _sensorOrientation = ((sensorOrientation % 360) + 360) % 360;
     if (imageWidth != null && imageHeight != null) {
       final swap = _sensorOrientation == 90 || _sensorOrientation == 270;
@@ -129,19 +142,23 @@ class V4SignRecognizer implements SignRecognizer {
     _ready = true;
   }
 
-  /// Rotate a sensor-oriented normalized point to the upright image.
+  /// Rotate a sensor-oriented normalized point to the upright image
+  /// (and un-mirror it when the camera delivers mirrored frames).
   (double, double) _rotateXY(double x, double y) {
-    switch (_sensorOrientation) {
-      case 90:
-        return (1.0 - y, x);
-      case 180:
-        return (1.0 - x, 1.0 - y);
-      case 270:
-        return (y, 1.0 - x);
-      default:
-        return (x, y);
-    }
+    final (rx, ry) = switch (_sensorOrientation) {
+      90 => (1.0 - y, x),
+      180 => (1.0 - x, 1.0 - y),
+      270 => (y, 1.0 - x),
+      _ => (x, y),
+    };
+    return _mirrored ? (1.0 - rx, ry) : (rx, ry);
   }
+
+  /// MediaPipe left/right pose landmark pairs (nose 0 has no pair).
+  static const List<int> _poseMirror = [
+    0, 4, 5, 6, 1, 2, 3, 8, 7, 10, 9, 12, 11, 14, 13, 16, 15, 18, 17, 20, 19,
+    22, 21, 24, 23, 26, 25, 28, 27, 30, 29, 32, 31,
+  ];
 
   @override
   SignPrediction addFrame(List<Hand> hands, List<PoseLandmark> pose, List<String> candidates) {
@@ -172,8 +189,16 @@ class V4SignRecognizer implements SignRecognizer {
           ]
     ];
     if (rawHands.isEmpty) return _last;
+    // Pose comes upright from the plugin. On a mirrored frame its "left"
+    // points are the person's right ones: flip x back and swap the pairs.
     final rawPose = pose.length >= kPoseLm
-        ? [for (var j = 0; j < kPoseLm; j++) ...[pose[j].x, pose[j].y, pose[j].z, pose[j].visibility]]
+        ? [
+            for (var j = 0; j < kPoseLm; j++)
+              ...() {
+                final p = pose[_mirrored ? _poseMirror[j] : j];
+                return [_mirrored ? 1.0 - p.x : p.x, p.y, p.z, p.visibility];
+              }()
+          ]
         : null;
     final raw = RawFrameV4(tMs: _clock.elapsedMilliseconds, hands: rawHands, pose: rawPose);
     final frame = canonicalizeFrame(raw, _imgW, _imgH, dominantLeft);
@@ -251,16 +276,15 @@ class V4SignRecognizer implements SignRecognizer {
       final allowed = _allowed(candidates, noneIdx);
       final sum = allowed.fold<double>(0.0, (a, i) => a + probs[i]);
       if (sum <= 0) return;
-      int argmax(List<double> p) => allowed.reduce((a, b) => p[b] > p[a] ? b : a);
-      final idx = argmax(probs);
-      final rawBest = allowed.where((i) => i != noneIdx).fold<int>(
-          -1, (b, i) => b < 0 || probs[i] > probs[b] ? i : b);
+      final j = _judge(probs, perModel, allowed, noneIdx);
+      final idx = j.sign;
       final conf = probs[idx] / sum;
-      final ok = idx != noneIdx &&
-          rawBest >= 0 &&
-          probs[rawBest] >= _minRawConf &&
-          perModel.every((p) => argmax(p) == idx) &&
-          conf >= _stableLockMinConf;
+      final ok = j.ok && conf >= _stableLockMinConf;
+      if (_log) {
+        debugPrint('FILOSIGN_FINAL ${_labels[idx]} ${(conf * 100).round()}% '
+            'raw ${(probs[idx] * 100).round()}% models ${j.models} '
+            'frames ${frames.length} -> ${ok ? "LOCK" : "not recognized"}');
+      }
       if (_buffer.isNotEmpty) return; // a new attempt already started
       if (ok) {
         _locked = true;
@@ -272,6 +296,29 @@ class V4SignRecognizer implements SignRecognizer {
     } finally {
       _predicting = false;
     }
+  }
+
+  /// Is this a sign, and which? Only this screen's signs are compared: a sign
+  /// can look like a sign from ANOTHER category (that probability is ignored
+  /// - on device "deaf" was 97% within Basics but only 32% over all signs).
+  /// Rejected when the model says "not a sign" more than the best sign, the
+  /// best sign is weak over all signs, or fewer than 2 of the 3 models pick it
+  /// (one model often mixed up look-alikes such as deaf / deaf_blind live).
+  /// Together with the 85% lock confidence, on held-out clips: words 90%
+  /// correct / 0.6% wrong, fake signs 92% rejected (same as all-3-agree).
+  ({int sign, bool ok, String models}) _judge(
+      List<double> probs, List<List<double>> perModel, Set<int> allowed, int noneIdx) {
+    final signs = [for (final i in allowed) if (i != noneIdx) i];
+    if (signs.isEmpty) return (sign: noneIdx, ok: false, models: '');
+    int best(List<double> p) => signs.reduce((a, b) => p[b] > p[a] ? b : a);
+    final idx = best(probs);
+    final picks = [for (final p in perModel) best(p)];
+    final noneP = noneIdx >= 0 ? probs[noneIdx] : 0.0;
+    final ok = noneP < probs[idx] &&
+        probs[idx] >= _minRawConf &&
+        picks.where((i) => i == idx).length >= 2;
+    return (sign: ok || noneP < probs[idx] ? idx : noneIdx, ok: ok,
+        models: picks.map((i) => _labels[i]).join('/'));
   }
 
   Set<int> _allowed(List<String> candidates, int noneIdx) {
@@ -298,33 +345,28 @@ class V4SignRecognizer implements SignRecognizer {
     final noneIdx = _labels.indexOf(noneLabel);
     final allowed = _allowed(candidates, noneIdx);
 
-    // raw (all-sign) score of the best candidate, before narrowing to the
-    // category: a real sign keeps most of the probability for itself
-    var rawBest = -1;
-    for (final i in allowed) {
-      if (i == noneIdx) continue;
-      if (rawBest < 0 || probs[i] > probs[rawBest]) rawBest = i;
-    }
     final masked = [for (var i = 0; i < probs.length; i++) allowed.contains(i) ? probs[i] : 0.0];
     final sum = masked.fold<double>(0.0, (a, b) => a + b);
-    if (sum <= 0 || rawBest < 0) return;
+    if (sum <= 0) return;
     final disp = [for (final p in masked) p / sum];
     final order = List<int>.generate(disp.length, (i) => i)..sort((a, b) => disp[b].compareTo(disp[a]));
     _top3 = [for (final i in order.take(3)) MapEntry(_labels[i], disp[i])];
-    final idx = order.first;
+
+    final j = _judge(probs, perModel, allowed, noneIdx);
+    final idx = j.sign;
     final conf = disp[idx];
-    final second = order.length > 1 ? disp[order[1]] : 0.0;
-
-    int argmaxAllowed(List<double> p) {
-      var b = -1;
-      for (final i in allowed) {
-        if (b < 0 || p[i] > p[b]) b = i;
-      }
-      return b;
+    final rest = order.where((i) => i != idx);
+    final second = rest.isEmpty ? 0.0 : disp[rest.first];
+    if (_log) {
+      final cover = _buffer.last.t - _buffer.first.t;
+      debugPrint('FILOSIGN_VOTE ${_labels[idx]} ${(conf * 100).round()}% '
+          'raw ${(probs[idx] * 100).round()}% '
+          'none ${noneIdx >= 0 ? (probs[noneIdx] * 100).round() : -1}% '
+          'models ${j.models} ok ${j.ok} '
+          'margin ${((conf - second) * 100).round()} cover ${cover.toStringAsFixed(1)}s '
+          'votes ${_voteClass.map((i) => _labels[i]).join(",")}');
     }
-
-    final agree = perModel.every((p) => argmaxAllowed(p) == idx);
-    if (idx == noneIdx || probs[rawBest] < _minRawConf || !agree) {
+    if (!j.ok) {
       _reject(conf);
       return;
     }
