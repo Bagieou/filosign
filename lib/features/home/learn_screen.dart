@@ -161,7 +161,7 @@ class _LearnScreenState extends State<LearnScreen> {
       ..showSnackBar(
         SnackBar(
           content: Text(
-              'Score at least 90% on the ${prev.title} quiz to unlock ${c.title}.'),
+              'Score at least 70% on the ${prev.title} quiz to unlock ${c.title}.'),
           behavior: SnackBarBehavior.floating,
           backgroundColor: const Color(0xFF087F73),
         ),
