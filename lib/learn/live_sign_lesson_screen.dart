@@ -72,6 +72,21 @@ class _LessonLiveSignScreenState extends State<LessonLiveSignScreen> {
   int _session = 0;
 
   int _wrongLocks = 0;
+  // REQ014: failed attempts in a row (a wrong sign or "Not recognized");
+  // at 3 the video of the correct sign opens by itself.
+  static const int autoVideoAfterFailures = 3;
+  int _failures = 0;
+  bool _lastNotRecognized = false;
+
+  void _countFailure() {
+    _failures++;
+    if (_failures >= autoVideoAfterFailures && !_paused && !_done) {
+      _failures = 0;
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted && !_done && !_paused) _showHint();
+      });
+    }
+  }
 
   bool get _hintAvailable => _wrongLocks >= hintAfterWrong || _hintByTime;
   bool get _skipAvailable =>
@@ -141,6 +156,7 @@ class _LessonLiveSignScreenState extends State<LessonLiveSignScreen> {
           _state = s;
           _wrongLocks++;
         });
+        _countFailure();
         _resetTimer = Timer(resetDelay, () {
           if (mounted && !_done) _resetRecognizer();
         });
@@ -151,6 +167,8 @@ class _LessonLiveSignScreenState extends State<LessonLiveSignScreen> {
     }
 
     setState(() => _state = s);
+    if (s.notRecognized && !_lastNotRecognized) _countFailure();
+    _lastNotRecognized = s.notRecognized;
 
     if (!_started && s.handCount > 0) {
       _started = true;
@@ -161,6 +179,8 @@ class _LessonLiveSignScreenState extends State<LessonLiveSignScreen> {
   }
 
   Future<void> _showHint() async {
+    if (_paused) return;
+    _failures = 0;
     _paused = true; // don't count locks that happen while the dialog is open
     await showDialog<void>(
       context: context,

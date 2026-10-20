@@ -14,6 +14,7 @@ import 'learn_screen.dart';
 import 'search_results_screen.dart';
 import 'package:filosign/learn/category.dart';
 import 'package:filosign/features/quiz/quiz_home_screen.dart';
+import 'package:filosign/widgets/coach_marks.dart';
 import 'package:filosign/test_build.dart';
 
 class CurrentLessonData {
@@ -44,12 +45,37 @@ class _HomePageState extends State<HomePage> {
   late Future<int> _lessonsCompletedFuture;
   late Future<CurrentLessonData?> _currentLessonFuture;
 
+  // first-run tour targets (REQ042)
+  final _tourSearch = GlobalKey();
+  final _tourStreak = GlobalKey();
+  final _tourLearn = GlobalKey();
+  final _tourPractice = GlobalKey();
+  final _tourNav = GlobalKey();
+
   @override
   void initState() {
     super.initState();
-    _streakFuture = _fetchStreak(); 
+    _streakFuture = _fetchStreak();
     _lessonsCompletedFuture = _fetchLessonsCompleted();
     _currentLessonFuture = _fetchCurrentLesson();
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      Future.delayed(const Duration(milliseconds: 600), () {
+        if (!mounted || _selectedIndex != 0) return;
+        CoachMarks.showOnce(context, [
+          CoachStep(_tourSearch, 'Search any sign',
+              'Type a word like "mother" or "hello" to find its lesson.'),
+          CoachStep(_tourStreak, 'Your progress',
+              'Learn every day to grow your streak.'),
+          CoachStep(_tourLearn, 'Learn',
+              'Watch the lesson videos by category, then sign each one with your camera. '
+                  'Pass a category quiz with 90% to unlock the next.'),
+          CoachStep(_tourPractice, 'Practice',
+              'Practice signs from categories you have studied. The camera tells you if your sign is correct.'),
+          CoachStep(_tourNav, 'Profile and Settings',
+              'See your progress, and change text size, high contrast or your account in Settings.'),
+        ]);
+      });
+    });
   }
 
    Future<int> _fetchStreak() async {
@@ -155,6 +181,7 @@ class _HomePageState extends State<HomePage> {
         ),
       ),
       bottomNavigationBar: NavigationBar(
+        key: _tourNav,
         selectedIndex: _selectedIndex,
         onDestinationSelected: (index) =>
             setState(() => _selectedIndex = index),
@@ -188,6 +215,7 @@ class _HomePageState extends State<HomePage> {
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           TextField(
+            key: _tourSearch,
             controller: _searchController,
             onChanged: (v) => setState(() {}),
             onSubmitted: (query) {
@@ -227,7 +255,7 @@ class _HomePageState extends State<HomePage> {
             ),
           ),
           const SizedBox(height: 22),
-          _buildStreakCard(),
+          KeyedSubtree(key: _tourStreak, child: _buildStreakCard()),
           const SizedBox(height: 28),
           const Text(
             'Keep learning',
@@ -241,6 +269,7 @@ class _HomePageState extends State<HomePage> {
           Row(
             children: [
               Expanded(
+                key: _tourLearn,
                 child: _buildActionButton(
                   icon: Icons.school_rounded,
                   title: 'Learn',
@@ -254,6 +283,7 @@ class _HomePageState extends State<HomePage> {
               ),
               const SizedBox(width: 14),
               Expanded(
+                key: _tourPractice,
                 child: _buildActionButton(
                   icon: Icons.fitness_center_rounded,
                   title: 'Practice',

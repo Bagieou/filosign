@@ -3,6 +3,8 @@
   import 'package:supabase_flutter/supabase_flutter.dart';
   import 'package:flutter/material.dart';
 
+  import '../../app_settings.dart';
+  import '../../widgets/coach_marks.dart';
   import '../auth/auth_page.dart' as auth;
   import '../auth/otp_verification_screen.dart';
 
@@ -40,6 +42,51 @@
                 Icons.chevron_right_rounded,
                 color: Color(0xFF6B8581),
               ),
+            ),
+            // Accessibility (REQ006): saved on the device, applied app-wide
+            ValueListenableBuilder<double>(
+              valueListenable: AppSettings.textScale,
+              builder: (context, scale, _) => _buildSettingTile(
+                Icons.format_size_rounded,
+                'Text size',
+                'Make the words in the app bigger',
+                trailing: DropdownButton<double>(
+                  value: AppSettings.textSizes.values.contains(scale) ? scale : 1.0,
+                  underline: const SizedBox(),
+                  items: [
+                    for (final e in AppSettings.textSizes.entries)
+                      DropdownMenuItem(value: e.value, child: Text(e.key)),
+                  ],
+                  onChanged: (v) {
+                    if (v != null) AppSettings.setTextScale(v);
+                  },
+                ),
+              ),
+            ),
+            ValueListenableBuilder<bool>(
+              valueListenable: AppSettings.highContrast,
+              builder: (context, hc, _) => _buildSettingTile(
+                Icons.contrast_rounded,
+                'High contrast',
+                'Stronger colours and bold text',
+                trailing: Switch(
+                  value: hc,
+                  onChanged: AppSettings.setHighContrast,
+                ),
+              ),
+            ),
+            _buildAccountActionTile(
+              icon: Icons.tips_and_updates_outlined,
+              title: 'Show app tour again',
+              subtitle: 'The tips on the Home page',
+              onTap: () async {
+                await CoachMarks.reset();
+                if (!mounted) return;
+                ScaffoldMessenger.of(this.context).showSnackBar(const SnackBar(
+                  content: Text('The tour will show next time you open the Home page.'),
+                  behavior: SnackBarBehavior.floating,
+                ));
+              },
             ),
             _buildAccountActionTile(
               icon: Icons.person_outline_rounded,

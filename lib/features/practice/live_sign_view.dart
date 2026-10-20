@@ -11,6 +11,7 @@ import 'package:flutter/services.dart' show MethodChannel;
 import 'package:flutter_pose_detection/flutter_pose_detection.dart';
 import 'package:hand_landmarker/hand_landmarker.dart';
 
+import '../../app_settings.dart' show InactivityGuard;
 import '../../recognizer/sign_recognizer.dart';
 import '../../test_build.dart';
 import '../../recognizer/v4_sign_recognizer.dart';
@@ -179,6 +180,9 @@ class LiveSignView extends StatefulWidget {
   final bool active; // false = stop processing frames (camera stays open)
   /// Gives the parent the recognizer (used for the debug capture).
   final ValueChanged<V4SignRecognizer>? onRecognizer;
+  /// Distance from the top of the view to the camera warning pill (lighting,
+  /// hand at the edge, low resolution), clear of the parent's own top overlay.
+  final double warningTop;
 
   const LiveSignView({
     super.key,
@@ -187,6 +191,7 @@ class LiveSignView extends StatefulWidget {
     this.dominantLeft = false,
     this.resetToken = 0,
     this.active = true,
+    this.warningTop = 12,
     this.onUpdate,
     this.onRecognizer,
   });
@@ -207,6 +212,9 @@ class _LiveSignViewState extends State<LiveSignView> with WidgetsBindingObserver
   /// the edge (user too close / off-centre) shifted every body-relative
   /// feature in the debug captures.
   bool _framingOk = true;
+  // Camera warnings (REQ028 lighting, REQ029 hand at the edge, REQ030 resolution)
+  bool _lowLight = false, _handAtEdge = false, _lowRes = false;
+  int _lastLightMs = 0, _edgeRun = 0, _clearRun = 0, _darkSinceMs = 0;
   /// Hand results per second (moving average); slow phones get fewer pose
   /// frames so the hand detector keeps up.
   double _handRate = 20;
@@ -282,6 +290,8 @@ class _LiveSignViewState extends State<LiveSignView> with WidgetsBindingObserver
       _lastHandMs = nowMs;
       final p = _recognizer.addFrame(hands, _latestPose, widget.candidates);
       _hands.value = hands;
+      if (hands.isNotEmpty) InactivityGuard.activity(); // signing counts as activity
+      _checkHandEdge(hands);
       if (sw != null) {
         _perf.hands++;
         _perf.handCbUs += sw.elapsedMicroseconds;
@@ -421,8 +431,15 @@ class _LiveSignViewState extends State<LiveSignView> with WidgetsBindingObserver
               imageHeight: image.height,
               mirrored: Platform.isIOS &&
                   controller.description.lensDirection == CameraLensDirection.front);
+          // REQ030: below 640 px on the long side the hands are too small
+          final lowRes = math.max(image.width, image.height) < 640;
+          if (lowRes != _lowRes && mounted) setState(() => _lowRes = lowRes);
         }
         final now = DateTime.now().millisecondsSinceEpoch;
+        if (now - _lastLightMs >= 500) {
+          _lastLightMs = now;
+          _checkLight(image, now);
+        }
         // Cheap here: both platforms detect off the UI thread and drop frames
         // while busy, so nothing queues up.
         if (now - _lastSentMs >= 33) {
@@ -540,6 +557,67 @@ class _LiveSignViewState extends State<LiveSignView> with WidgetsBindingObserver
     );
   }
 
+  /// REQ028: average brightness of a sparse sample of the frame (0-255).
+  /// Dark for 1 s -> warn; clears with some margin so it doesn't flicker.
+  void _checkLight(CameraImage image, int now) {
+    final p = image.planes.first;
+    final bytes = p.bytes;
+    if (bytes.isEmpty) return;
+    final bgra = Platform.isIOS; // iOS: BGRA pixels; Android: Y (luma) plane
+    const samples = 1500;
+    final stride = math.max(1, bytes.length ~/ samples);
+    var sum = 0, n = 0;
+    for (var i = 0; i + 3 < bytes.length; i += stride) {
+      final at = bgra ? i - i % 4 : i;
+      sum += bgra
+          ? (bytes[at] * 29 + bytes[at + 1] * 150 + bytes[at + 2] * 77) >> 8
+          : bytes[at];
+      n++;
+    }
+    if (n == 0) return;
+    final mean = sum / n;
+    var dark = _lowLight;
+    if (mean < 55) {
+      if (_darkSinceMs == 0) _darkSinceMs = now;
+      if (now - _darkSinceMs >= 1000) dark = true;
+    } else {
+      _darkSinceMs = 0;
+      if (mean > 70) dark = false;
+    }
+    if (dark != _lowLight && mounted) setState(() => _lowLight = dark);
+  }
+
+  /// REQ029: a hand whose landmarks reach the frame edge (3% margin) is cut
+  /// off; warn after 3 such results in a row, clear after 5 clear ones.
+  void _checkHandEdge(List<Hand> hands) {
+    var edge = false;
+    for (final h in hands) {
+      for (final lm in h.landmarks) {
+        if (lm.x < 0.03 || lm.x > 0.97 || lm.y < 0.03 || lm.y > 0.97) {
+          edge = true;
+          break;
+        }
+      }
+    }
+    if (edge) {
+      _edgeRun++;
+      _clearRun = 0;
+    } else {
+      _clearRun++;
+      _edgeRun = 0;
+    }
+    final show = _handAtEdge ? _clearRun < 5 : _edgeRun >= 3;
+    if (show != _handAtEdge && mounted) setState(() => _handAtEdge = show);
+  }
+
+  String? get _warning => _lowLight
+      ? 'Too dark: add light in front of you'
+      : _handAtEdge
+          ? 'Keep your hands inside the frame'
+          : _lowRes
+              ? 'Camera resolution is low: recognition may be less accurate'
+              : null;
+
   Future<void> _stopStream([CameraController? c]) async {
     final controller = c ?? _controller;
     if (controller != null && _streaming) {
@@ -651,21 +729,53 @@ class _LiveSignViewState extends State<LiveSignView> with WidgetsBindingObserver
           ),
       ],
     );
-    if (previewSize == null) {
-      return Center(
-        child: AspectRatio(aspectRatio: 1 / controller.value.aspectRatio, child: view),
-      );
-    }
-    // Fill the whole box (crop the edges) instead of black bars.
-    return ClipRect(
-      child: FittedBox(
-        fit: BoxFit.cover,
-        child: SizedBox(
-          width: previewSize.height, // portrait: sensor width/height swap
-          height: previewSize.width,
-          child: view,
+    final Widget camera = previewSize == null
+        ? Center(
+            child: AspectRatio(aspectRatio: 1 / controller.value.aspectRatio, child: view),
+          )
+        // Fill the whole box (crop the edges) instead of black bars.
+        : ClipRect(
+            child: FittedBox(
+              fit: BoxFit.cover,
+              child: SizedBox(
+                width: previewSize.height, // portrait: sensor width/height swap
+                height: previewSize.width,
+                child: view,
+              ),
+            ),
+          );
+    final warning = _warning;
+    if (warning == null) return camera;
+    return Stack(
+      fit: StackFit.expand,
+      children: [
+        camera,
+        Positioned(
+          top: widget.warningTop,
+          left: 16,
+          right: 16,
+          child: Center(
+            child: Container(
+              padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 9),
+              decoration: BoxDecoration(
+                color: const Color(0xEEB45309),
+                borderRadius: BorderRadius.circular(20),
+              ),
+              child: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  const Icon(Icons.warning_amber_rounded, color: Colors.white, size: 18),
+                  const SizedBox(width: 8),
+                  Flexible(
+                    child: Text(warning,
+                        style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w700)),
+                  ),
+                ],
+              ),
+            ),
+          ),
         ),
-      ),
+      ],
     );
   }
 }

@@ -113,6 +113,7 @@ class _LivePracticeScreenState extends State<LivePracticeScreen> {
             resetToken: _resetToken,
             onUpdate: (st) => setState(() => _state = st),
             onRecognizer: (r) => _recognizer = r,
+            warningTop: 96, // below the hint card
           ),
           Positioned(
             top: 12,

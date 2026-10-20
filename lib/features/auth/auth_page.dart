@@ -1,6 +1,7 @@
 import 'package:filosign/features/auth/legal_document_modal.dart';
 import 'package:filosign/features/auth/otp_verification_screen.dart';
 import 'package:filosign/features/home/home_page.dart';
+import 'package:filosign/widgets/captcha_dialog.dart';
 import 'package:flutter/material.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
@@ -136,6 +137,10 @@ class _AuthPageState extends State<AuthPage> {
       _showError('Please enter email and password');
       return;
     }
+
+    // REQ034: CAPTCHA before the account is created
+    final human = await showCaptchaDialog(context);
+    if (!human || !mounted) return;
 
     setState(() => _isLoading = true);
 
