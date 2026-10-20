@@ -170,7 +170,6 @@ class _QuizScreenState extends State<QuizScreen> {
       _saveFailed = false;
     });
     progressVersion.value++;
-
     // The server expects a percentage (0-100), not a raw count.
     final percent = _score * 100 / _questions.length;
 

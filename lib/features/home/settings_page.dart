@@ -27,15 +27,6 @@
         child: Column(
           children: [
             _buildSettingTile(
-              Icons.notifications_none_rounded,
-              'Notifications',
-              'Daily learning reminders',
-              trailing: Switch(
-                value: _notificationsEnabled,
-                onChanged: (value) => setState(() => _notificationsEnabled = value),
-              ),
-            ),
-            _buildSettingTile(
               Icons.language_rounded,
               'Learning language',
               'Filipino Sign Language',
