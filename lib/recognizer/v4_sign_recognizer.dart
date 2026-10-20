@@ -8,6 +8,7 @@ import 'package:flutter_pose_detection/flutter_pose_detection.dart';
 import 'package:hand_landmarker/hand_landmarker.dart';
 import 'package:tflite_flutter/tflite_flutter.dart';
 
+import '../test_build.dart';
 import 'sign_recognizer.dart';
 import 'v4/canonical_v4.dart';
 import 'v4/features_v4.dart';
@@ -20,7 +21,41 @@ import 'v4/features_v4.dart';
 class V4SignRecognizer implements SignRecognizer {
   static const int seqLen = 30;
   /// Debug builds (--dart-define=FILOSIGN_DEBUG_UI=true): log every decision.
-  static const bool _log = bool.fromEnvironment('FILOSIGN_DEBUG_UI');
+  static const bool _log = bool.fromEnvironment('FILOSIGN_DEBUG_UI') || kTestBuild;
+  /// TEST builds: receives every finished attempt (raw landmarks + every
+  /// decision) so it can be saved on the phone and replayed offline.
+  static void Function(Map<String, dynamic> attempt)? attemptSink;
+  /// Sign the screen asks for (lesson / quiz), saved with each attempt.
+  String? expected;
+  final List<String> _events = [];
+  List<String> _candidates = const [];
+
+  void _event(String line) {
+    if (_log) debugPrint(line);
+    if (attemptSink != null) _events.add('${_clock.elapsedMilliseconds} $line');
+  }
+
+  void _emitAttempt(List<RawFrameV4> raw, List<String> events, String result) {
+    final sink = attemptSink;
+    if (sink == null || raw.length < 5) return;
+    sink({
+      'version': 1,
+      'head': headName,
+      'expected': expected,
+      'candidates': _candidates,
+      'width': _imgW,
+      'height': _imgH,
+      'sensor_orientation': _sensorOrientation,
+      'mirrored': _mirrored,
+      'dominant_left': dominantLeft,
+      'window_s': windowS,
+      'result': result,
+      'events': List.of(events),
+      'frames': [
+        for (final f in raw) {'t_ms': f.tMs, 'hands': f.hands, 'pose': f.pose}
+      ],
+    });
+  }
   static const int _predictEveryN = 5;
   static const int _handsAwayReset = 10;
   static const int _bufferMaxMs = 5000;
@@ -32,6 +67,14 @@ class V4SignRecognizer implements SignRecognizer {
   static const int _stableLockCount = 3;
   static const int _voteWindow = 5;
   static const double _stableLockMinConf = 0.85;
+  /// Word signs are judged ONCE, on the whole attempt, when the hands drop
+  /// (or after [_maxAttemptS] with the hands still up) - never mid-sign.
+  /// Replayed on held-out clips + 50 on-device attempts (src/tune_live_v4.py):
+  /// live lock 89.2% correct / 3.4% wrong (on-device 44%); whole attempt at
+  /// 70%: 91.5% / 0.8% (on-device 50%). Letters keep the live lock (91%).
+  bool get _endOnly => !letters;
+  static const double _endLockWords = 0.70;
+  static const double _maxAttemptS = 4.5;
   static const double _minMargin = 0.25;
   /// Minimum probability the best sign must have among ALL signs (before the
   /// category filter). Random movements spread probability thin.
@@ -165,13 +208,17 @@ class V4SignRecognizer implements SignRecognizer {
   @override
   SignPrediction addFrame(List<Hand> hands, List<PoseLandmark> pose, List<String> candidates) {
     if (!_ready || _locked || !hasImageSize) return _last;
+    _candidates = candidates;
     if (hands.isEmpty) {
       _handsAway++;
       if (_handsAway == _handsAwayReset) {
         // hands dropped: judge the whole attempt once, the way training saw
         // signs (live windows often hold only part of a sign)
         if (_buffer.length >= _minWindowFrames) {
-          _finalDecision(List.of(_buffer), List.of(candidates), _attempt);
+          _finalDecision(List.of(_buffer), List.of(candidates), _attempt,
+              List.of(_rawBuffer), List.of(_events));
+        } else {
+          _emitAttempt(_rawBuffer, _events, 'too_short');
         }
         _clearAttempt();
       }
@@ -214,6 +261,14 @@ class V4SignRecognizer implements SignRecognizer {
       _rawBuffer.removeAt(0);
     }
 
+    if (_endOnly && frame.t - _buffer.first.t >= _maxAttemptS) {
+      // hands kept up: judge what was signed, then start a new attempt
+      _finalDecision(List.of(_buffer), List.of(candidates), _attempt,
+          List.of(_rawBuffer), List.of(_events));
+      _clearAttempt();
+      return _last;
+    }
+
     _framesSincePredict++;
     if (_framesSincePredict >= _predictEveryN) {
       _framesSincePredict = 0;
@@ -230,6 +285,9 @@ class V4SignRecognizer implements SignRecognizer {
   /// 4.2%); one model alone locked 6-8.5% wrong. One prediction at a time.
   Future<void> _predictAndVote(List<String> candidates, double now) async {
     if (_predicting) return;
+    // Word signs: no mid-sign decision; the TEST build still runs model 1
+    // for the Top-3 panel and the attempt log.
+    if (_endOnly && !_log) return;
     final window = [for (final f in _buffer) if (f.t >= now - windowS) f];
     if (window.length < _minWindowFrames) return;
     _predicting = true;
@@ -240,6 +298,10 @@ class V4SignRecognizer implements SignRecognizer {
       final first = await _run(input, const [0]);
       if (first == null || _locked || !_ready) return;
       final lockAt = _vote(first.$1, first.$2, candidates);
+      if (_endOnly) {
+        _last = SignPrediction.none; // nothing shown until the hands drop
+        return;
+      }
       if (lockAt != null) {
         final rest = await _run(input, const [1, 2]);
         if (rest == null || _locked || !_ready) return;
@@ -299,7 +361,7 @@ class V4SignRecognizer implements SignRecognizer {
     final conf = probs[j.sign] / sum;
     final ok = j.ok && j.sign == cls && conf >= _stableLockMinConf;
     if (_log) {
-      debugPrint('FILOSIGN_CONFIRM ${_labels[cls]} -> ${j.models} ${(conf * 100).round()}% '
+      _event('FILOSIGN_CONFIRM ${_labels[cls]} -> ${j.models} ${(conf * 100).round()}% '
           '${ok ? "LOCK" : "rejected"}');
     }
     if (ok) {
@@ -315,7 +377,18 @@ class V4SignRecognizer implements SignRecognizer {
   /// every frame since the hands appeared, like a whole training clip, with
   /// all 3 models and the same rule as a live lock ([_judge] + 85%).
   /// Simulated on held-out clips: words 40% -> 87% correct, wrong ~3%.
-  Future<void> _finalDecision(List<CanonFrame> frames, List<String> candidates, int attempt) async {
+  Future<void> _finalDecision(List<CanonFrame> frames, List<String> candidates, int attempt,
+      [List<RawFrameV4> raw = const [], List<String> events = const []]) async {
+    var result = 'final_skipped';
+    try {
+      await _finalDecisionRun(frames, candidates, attempt, events, (r) => result = r);
+    } finally {
+      _emitAttempt(raw, events, result);
+    }
+  }
+
+  Future<void> _finalDecisionRun(List<CanonFrame> frames, List<String> candidates, int attempt,
+      List<String> events, void Function(String) setResult) async {
     while (_predicting) {
       await Future<void>.delayed(const Duration(milliseconds: 10));
     }
@@ -332,13 +405,18 @@ class V4SignRecognizer implements SignRecognizer {
       final j = _judge(probs, perModel, allowed, noneIdx);
       final idx = j.sign;
       final conf = probs[idx] / sum;
-      final ok = j.ok && conf >= _stableLockMinConf;
+      final ok = j.ok && conf >= (_endOnly ? _endLockWords : _stableLockMinConf);
       if (_log) {
-        debugPrint('FILOSIGN_FINAL ${_labels[idx]} ${(conf * 100).round()}% '
+        final line = 'FILOSIGN_FINAL ${_labels[idx]} ${(conf * 100).round()}% '
             'raw ${(probs[idx] * 100).round()}% models ${j.models} '
-            'frames ${frames.length} -> ${ok ? "LOCK" : "not recognized"}');
+            'frames ${frames.length} -> ${ok ? "LOCK" : "not recognized"}';
+        debugPrint(line);
+        events.add('${_clock.elapsedMilliseconds} $line');
       }
-      if (_buffer.isNotEmpty) return; // a new attempt already started
+      setResult(ok ? 'final_lock:${_labels[idx]}' : 'final_rejected:${_labels[idx]}');
+      // A new attempt already started (hands back up, or kept up past
+      // _maxAttemptS): a match still counts, a miss is not shown over it.
+      if (_buffer.isNotEmpty && !ok) return;
       if (ok) {
         _locked = true;
         notRecognized = false;
@@ -414,7 +492,7 @@ class V4SignRecognizer implements SignRecognizer {
     final second = rest.isEmpty ? 0.0 : disp[rest.first];
     if (_log) {
       final cover = _buffer.last.t - _buffer.first.t;
-      debugPrint('FILOSIGN_VOTE ${_labels[idx]} ${(conf * 100).round()}% '
+      _event('FILOSIGN_VOTE ${_labels[idx]} ${(conf * 100).round()}% '
           'raw ${(probs[idx] * 100).round()}% '
           'none ${noneIdx >= 0 ? (probs[noneIdx] * 100).round() : -1}% '
           'models ${j.models} ok ${j.ok} '
@@ -480,6 +558,7 @@ class V4SignRecognizer implements SignRecognizer {
   void _clearAttempt() {
     if (_rawBuffer.length >= 5) _lastAttemptRaw = List.of(_rawBuffer);
     _rawBuffer.clear();
+    _events.clear();
     _buffer.clear();
     _voteClass.clear();
     _voteConf.clear();
@@ -492,6 +571,10 @@ class V4SignRecognizer implements SignRecognizer {
 
   @override
   void reset() {
+    if (_rawBuffer.isNotEmpty) {
+      _emitAttempt(List.of(_rawBuffer), List.of(_events),
+          _locked ? 'live_lock:${_last.sign}' : 'reset');
+    }
     _attempt++; // drops a pending end-of-attempt decision
     _clearAttempt();
     _handsAway = 0;
@@ -500,6 +583,10 @@ class V4SignRecognizer implements SignRecognizer {
 
   @override
   void dispose() {
+    if (_rawBuffer.isNotEmpty) {
+      _emitAttempt(List.of(_rawBuffer), List.of(_events),
+          _locked ? 'live_lock:${_last.sign}' : 'closed');
+    }
     // the models are shared and cached (see [_cache]); just stop using them
     _ready = false;
     _attempt++;

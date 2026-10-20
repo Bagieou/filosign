@@ -599,6 +599,7 @@ class _LiveQuestionState extends State<_LiveQuestion> {
                     _mountView ? LiveSignView(
                           active: !widget.answered,
                           candidates: _titleByLabel.keys.toList(),
+                      expected: _target,
                           letters: widget.category.id == lettersCategoryId,
                           onUpdate: _onUpdate,
                         ): const Center(

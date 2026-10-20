@@ -1,5 +1,6 @@
 import 'dart:async';
-import 'dart:io' show Platform;
+import 'dart:convert' show jsonEncode;
+import 'dart:io' show Directory, File, Platform;
 import 'dart:math' as math;
 import 'dart:typed_data';
 import 'dart:ui' show FrameTiming;
@@ -10,6 +11,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart' show MethodChannel;
 import 'package:flutter_pose_detection/flutter_pose_detection.dart';
 import 'package:hand_landmarker/hand_landmarker.dart';
+import 'package:path_provider/path_provider.dart';
 
 import '../../app_settings.dart' show InactivityGuard;
 import '../../recognizer/sign_recognizer.dart';
@@ -191,6 +193,8 @@ class LiveSignView extends StatefulWidget {
   /// Distance from the top of the view to the camera warning pill (lighting,
   /// hand at the edge, low resolution), clear of the parent's own top overlay.
   final double warningTop;
+  /// The sign this screen asks for (lesson / quiz); saved with TEST attempts.
+  final String? expected;
 
   const LiveSignView({
     super.key,
@@ -202,6 +206,7 @@ class LiveSignView extends StatefulWidget {
     this.warningTop = 12,
     this.onUpdate,
     this.onRecognizer,
+    this.expected,
   });
   @override
   State<LiveSignView> createState() => _LiveSignViewState();
@@ -273,7 +278,9 @@ class _LiveSignViewState extends State<LiveSignView> with WidgetsBindingObserver
     WidgetsBinding.instance.addObserver(this);
     if (kShowDebugUi) WidgetsBinding.instance.addTimingsCallback(_perf.onTimings);
     _recognizer = V4SignRecognizer(letters: widget.letters)
-      ..dominantLeft = widget.dominantLeft;
+      ..dominantLeft = widget.dominantLeft
+      ..expected = widget.expected;
+    if (kTestBuild) V4SignRecognizer.attemptSink ??= _saveAttempt;
     if (!kLiveSignSupported) return; // build() shows the unsupported notice
     // A model that fails to load must show, not leave the screen "watching".
     _recognizer.init().catchError((Object e) {
@@ -281,6 +288,25 @@ class _LiveSignViewState extends State<LiveSignView> with WidgetsBindingObserver
     });
     WidgetsBinding.instance.addPostFrameCallback((_) => widget.onRecognizer?.call(_recognizer));
     _setupCamera();
+  }
+
+  /// TEST builds: every attempt -> Android/data/<app>/files/attempts/*.json
+  /// (pulled with adb, replayed offline by src/replay_debug_v4.py).
+  static Future<void> _saveAttempt(Map<String, dynamic> attempt) async {
+    try {
+      final base = Platform.isAndroid
+          ? await getExternalStorageDirectory()
+          : await getApplicationDocumentsDirectory();
+      if (base == null) return;
+      final dir = Directory('${base.path}/attempts');
+      await dir.create(recursive: true);
+      final stamp = DateTime.now().toIso8601String().replaceAll(RegExp(r'[:.]'), '-');
+      final tag = '${attempt['expected'] ?? 'any'}_${attempt['result']}'
+          .replaceAll(RegExp(r'[^A-Za-z0-9_-]'), '_');
+      await File('${dir.path}/${stamp}_$tag.json').writeAsString(jsonEncode(attempt));
+    } catch (e) {
+      debugPrint('FILOSIGN_SAVE_FAILED $e');
+    }
   }
 
   /// Hooks this view up to the shared detectors (created on first use only).

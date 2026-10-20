@@ -286,6 +286,7 @@ class _LessonLiveSignScreenState extends State<LessonLiveSignScreen> {
                     _mountView ? LiveSignView(
                       resetToken: _session,
                       candidates: _titleByLabel.keys.toList(),
+                      expected: _target,
                       letters: widget.category.id == lettersCategoryId,
                       onUpdate: _onUpdate,
                     ): const Center (

@@ -50,6 +50,7 @@ flutter:
     - assets/videos/greetings/
     - assets/videos/letters/
     - assets/videos/numbers/
+    - assets/videos/months/
     - assets/models/
     - assets/html/
 
