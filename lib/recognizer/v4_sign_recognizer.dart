@@ -1,5 +1,6 @@
 import 'dart:convert';
 import 'dart:isolate';
+import 'dart:math' as math;
 
 import 'package:flutter/foundation.dart' show debugPrint;
 import 'package:flutter/services.dart' show rootBundle;
@@ -221,9 +222,12 @@ class V4SignRecognizer implements SignRecognizer {
     return _last;
   }
 
-  /// Features + the 3 models run OFF the UI thread (background isolate +
-  /// IsolateInterpreter), so the camera preview never freezes. Only one
-  /// prediction is in flight at a time; new requests are skipped meanwhile.
+  /// Cascade, off the UI thread (background isolate + IsolateInterpreter):
+  /// while signing only model 1 of 3 runs; when its votes would lock, models
+  /// 2 and 3 judge the same window and the lock needs 2 of 3 to agree at 85%.
+  /// Simulated on held-out clips (src/compare_ensemble_v4.py): words 89.2%
+  /// correct / 3.0% wrong with 40% of the model runs of always-3 (88.6% /
+  /// 4.2%); one model alone locked 6-8.5% wrong. One prediction at a time.
   Future<void> _predictAndVote(List<String> candidates, double now) async {
     if (_predicting) return;
     final window = [for (final f in _buffer) if (f.t >= now - windowS) f];
@@ -231,37 +235,85 @@ class V4SignRecognizer implements SignRecognizer {
     _predicting = true;
     try {
       final sw = Stopwatch()..start();
-      final out = await _infer(window);
-      if (out == null || _locked || !_ready) return;
+      final input = await _input(window);
+      if (input == null || _locked || !_ready) return;
+      final first = await _run(input, const [0]);
+      if (first == null || _locked || !_ready) return;
+      final lockAt = _vote(first.$1, first.$2, candidates);
+      if (lockAt != null) {
+        final rest = await _run(input, const [1, 2]);
+        if (rest == null || _locked || !_ready) return;
+        _confirmLock(lockAt, [...first.$2, ...rest.$2], candidates);
+      }
       lastLatencyMs = sw.elapsedMilliseconds;
-      _vote(out.$1, out.$2, candidates);
     } finally {
       _predicting = false;
     }
   }
 
-  /// Averaged probabilities + each model's own, for one window of frames.
-  Future<(List<double>, List<List<double>>)?> _infer(List<CanonFrame> window) async {
+  /// Model input for one window of frames (features computed in an isolate).
+  Future<List<List<List<double>>>?> _input(List<CanonFrame> window) {
     final isLetters = letters;
-    final input = await Isolate.run(() => _featureInput(window, isLetters));
-    final models = [..._isoInterpreters];
-    if (input == null || models.isEmpty) return null;
-    final probs = List<double>.filled(_labels.length, 0.0);
+    return Isolate.run(() => _featureInput(window, isLetters));
+  }
+
+  /// Averaged probabilities + each model's own, for the models in [which].
+  Future<(List<double>, List<List<double>>)?> _run(
+      List<List<List<double>>> input, List<int> which) async {
+    final models = [for (final i in which) if (i < _isoInterpreters.length) _isoInterpreters[i]];
+    if (models.isEmpty) return null;
     final perModel = <List<double>>[];
     for (final interp in models) {
       final output = [List<double>.filled(_labels.length, 0.0)];
       await interp.run(input, output);
       perModel.add(List<double>.of(output[0]));
+    }
+    return (_mean(perModel), perModel);
+  }
+
+  List<double> _mean(List<List<double>> perModel) {
+    final probs = List<double>.filled(_labels.length, 0.0);
+    for (final p in perModel) {
       for (var i = 0; i < probs.length; i++) {
-        probs[i] += output[0][i] / models.length;
+        probs[i] += p[i] / perModel.length;
       }
     }
-    return (probs, perModel);
+    return probs;
+  }
+
+  /// All 3 models on a whole attempt (the end-of-sign decision).
+  Future<(List<double>, List<List<double>>)?> _infer(List<CanonFrame> window) async {
+    final input = await _input(window);
+    if (input == null) return null;
+    return _run(input, const [0, 1, 2]);
+  }
+
+  /// The 3-model check behind a live lock: same rule as the end of a sign.
+  void _confirmLock(int cls, List<List<double>> perModel, List<String> candidates) {
+    final probs = _mean(perModel);
+    final noneIdx = _labels.indexOf(noneLabel);
+    final allowed = _allowed(candidates, noneIdx);
+    final sum = allowed.fold<double>(0.0, (a, i) => a + probs[i]);
+    if (sum <= 0) return;
+    final j = _judge(probs, perModel, allowed, noneIdx);
+    final conf = probs[j.sign] / sum;
+    final ok = j.ok && j.sign == cls && conf >= _stableLockMinConf;
+    if (_log) {
+      debugPrint('FILOSIGN_CONFIRM ${_labels[cls]} -> ${j.models} ${(conf * 100).round()}% '
+          '${ok ? "LOCK" : "rejected"}');
+    }
+    if (ok) {
+      _locked = true;
+      _last = SignPrediction(sign: _labels[cls], confidence: conf);
+    } else {
+      _voteClass.clear(); // the other models disagree: start the votes over
+      _voteConf.clear();
+    }
   }
 
   /// End of an attempt (hands left the frame) without a live lock: classify
   /// every frame since the hands appeared, like a whole training clip, with
-  /// the same strict rule (not __none__, raw >= 0.5, all 3 agree, >= 0.85).
+  /// all 3 models and the same rule as a live lock ([_judge] + 85%).
   /// Simulated on held-out clips: words 40% -> 87% correct, wrong ~3%.
   Future<void> _finalDecision(List<CanonFrame> frames, List<String> candidates, int attempt) async {
     while (_predicting) {
@@ -317,7 +369,7 @@ class V4SignRecognizer implements SignRecognizer {
     final noneP = noneIdx >= 0 ? probs[noneIdx] : 0.0;
     final ok = noneP < probs[idx] &&
         probs[idx] >= _minRawConf &&
-        picks.where((i) => i == idx).length >= 2;
+        picks.where((i) => i == idx).length >= math.min(2, picks.length);
     return (sign: ok || noneP < probs[idx] ? idx : noneIdx, ok: ok,
         models: picks.map((i) => _labels[i]).join('/'));
   }
@@ -342,13 +394,15 @@ class V4SignRecognizer implements SignRecognizer {
     _voteConf.clear();
   }
 
-  void _vote(List<double> probs, List<List<double>> perModel, List<String> candidates) {
+  /// Live vote on one window. Returns the sign whose votes would lock (to be
+  /// confirmed by all 3 models), or null.
+  int? _vote(List<double> probs, List<List<double>> perModel, List<String> candidates) {
     final noneIdx = _labels.indexOf(noneLabel);
     final allowed = _allowed(candidates, noneIdx);
 
     final masked = [for (var i = 0; i < probs.length; i++) allowed.contains(i) ? probs[i] : 0.0];
     final sum = masked.fold<double>(0.0, (a, b) => a + b);
-    if (sum <= 0) return;
+    if (sum <= 0) return null;
     final disp = [for (final p in masked) p / sum];
     final order = List<int>.generate(disp.length, (i) => i)..sort((a, b) => disp[b].compareTo(disp[a]));
     _top3 = [for (final i in order.take(3)) MapEntry(_labels[i], disp[i])];
@@ -369,11 +423,11 @@ class V4SignRecognizer implements SignRecognizer {
     }
     if (!j.ok) {
       _reject(conf);
-      return;
+      return null;
     }
     notRecognized = false;
     _last = SignPrediction(sign: _labels[idx], confidence: conf);
-    if (conf - second < _minMargin) return; // ambiguous: show, don't vote
+    if (conf - second < _minMargin) return null; // ambiguous: show, don't vote
 
     _voteClass.add(idx);
     _voteConf.add(conf);
@@ -382,7 +436,7 @@ class V4SignRecognizer implements SignRecognizer {
       _voteConf.removeAt(0);
     }
     // only lock once the buffer covers most of a sign
-    if (_buffer.last.t - _buffer.first.t < 0.8 * windowS) return;
+    if (_buffer.last.t - _buffer.first.t < 0.8 * windowS) return null;
     final counts = <int, int>{}, sums = <int, double>{};
     for (var i = 0; i < _voteClass.length; i++) {
       counts[_voteClass[i]] = (counts[_voteClass[i]] ?? 0) + 1;
@@ -397,11 +451,9 @@ class V4SignRecognizer implements SignRecognizer {
     });
     if (bestC >= 0 && bestN >= _stableLockCount) {
       final mean = sums[bestC]! / bestN;
-      if (mean >= _stableLockMinConf) {
-        _locked = true;
-        _last = SignPrediction(sign: _labels[bestC], confidence: mean);
-      }
+      if (mean >= _stableLockMinConf) return bestC;
     }
+    return null;
   }
 
   /// Debug capture: the last few seconds exactly as the recognizer saw them
