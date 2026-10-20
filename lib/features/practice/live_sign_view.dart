@@ -96,6 +96,11 @@ class _SharedDetectors {
 
   static Stream<List<Hand>> get results => _results.stream;
 
+  /// Last native hand-detection failure (null while results are good).
+  static String? _iosError;
+  static String? get lastError =>
+      Platform.isIOS ? _iosError : HandLandmarkerPlugin.lastError;
+
   /// Cheap on the UI thread: Android converts + detects on a native worker;
   /// iOS sends the BGRA frame and skips frames while one is in flight.
   static void processFrame(CameraImage image, int orientation) {
@@ -119,6 +124,7 @@ class _SharedDetectors {
         'bytesPerRow': p.bytesPerRow,
         'ts': DateTime.now().millisecondsSinceEpoch,
       });
+      _iosError = null;
       _results.add([
         for (final h in res ?? const <Object?>[])
           Hand([
@@ -128,6 +134,8 @@ class _SharedDetectors {
           ]),
       ]);
     } catch (e) {
+      _iosError = '$e';
+      _results.add(const []); // keeps the error check + watchdog running
       if (kShowDebugUi) debugPrint('FILOSIGN_IOS_HANDS $e');
     } finally {
       _iosBusy = false;
@@ -220,6 +228,11 @@ class _LiveSignViewState extends State<LiveSignView> with WidgetsBindingObserver
   double _handRate = 20;
   int _lastHandMs = 0;
   bool _disposed = false;
+  // Hand detector health: a native failure or no results at all must show on
+  // screen (a silent failure looked like "the app recognizes nothing").
+  int _firstSentMs = 0, _lastResultMs = 0;
+  bool _detectStalled = false;
+  String? _detectError;
 
   // Serializes camera teardown/setup across LiveSignView instances, so a new
   // view never opens the front camera while the previous one is still closing.
@@ -288,6 +301,14 @@ class _LiveSignViewState extends State<LiveSignView> with WidgetsBindingObserver
         _handRate = _handRate * 0.9 + (1000 / dt) * 0.1;
       }
       _lastHandMs = nowMs;
+      _lastResultMs = nowMs;
+      final err = _SharedDetectors.lastError;
+      if (err != _detectError || _detectStalled) {
+        setState(() {
+          _detectError = err;
+          _detectStalled = false;
+        });
+      }
       final p = _recognizer.addFrame(hands, _latestPose, widget.candidates);
       _hands.value = hands;
       if (hands.isNotEmpty) InactivityGuard.activity(); // signing counts as activity
@@ -413,6 +434,8 @@ class _LiveSignViewState extends State<LiveSignView> with WidgetsBindingObserver
     // Flip before the await so _setupCamera and didUpdateWidget can't both
     // enter and trigger "already streaming".
     _streaming = true;
+    _firstSentMs = 0;
+    _lastResultMs = 0;
     try {
       final orientation = controller.description.sensorOrientation;
       await controller.startImageStream((CameraImage image) {
@@ -439,11 +462,13 @@ class _LiveSignViewState extends State<LiveSignView> with WidgetsBindingObserver
         if (now - _lastLightMs >= 500) {
           _lastLightMs = now;
           _checkLight(image, now);
+          _checkDetector(now);
         }
         // Cheap here: both platforms detect off the UI thread and drop frames
         // while busy, so nothing queues up.
         if (now - _lastSentMs >= 33) {
           _lastSentMs = now;
+          if (_firstSentMs == 0) _firstSentMs = now;
           try {
             _SharedDetectors.processFrame(image, orientation);
           } catch (_) {}
@@ -610,13 +635,26 @@ class _LiveSignViewState extends State<LiveSignView> with WidgetsBindingObserver
     if (show != _handAtEdge && mounted) setState(() => _handAtEdge = show);
   }
 
-  String? get _warning => _lowLight
-      ? 'Too dark: add light in front of you'
-      : _handAtEdge
-          ? 'Keep your hands inside the frame'
-          : _lowRes
-              ? 'Camera resolution is low: recognition may be less accurate'
-              : null;
+  /// Frames go in but no hand result has come back for 4 s (first start
+  /// included: the GPU model load takes ~1 s) -> the detector is stuck.
+  void _checkDetector(int now) {
+    if (_firstSentMs == 0) return;
+    final since = _lastResultMs > _firstSentMs ? _lastResultMs : _firstSentMs;
+    final stalled = now - since > 4000;
+    if (stalled != _detectStalled && mounted) setState(() => _detectStalled = stalled);
+  }
+
+  String? get _warning {
+    if (_detectError != null) {
+      return 'Hand detection error. Close and reopen this screen.'
+          '${kShowDebugUi ? '\n$_detectError' : ''}';
+    }
+    if (_detectStalled) return 'Hand detection is not responding. Close and reopen this screen.';
+    if (_lowLight) return 'Too dark: add light in front of you';
+    if (_handAtEdge) return 'Keep your hands inside the frame';
+    if (_lowRes) return 'Camera resolution is low: recognition may be less accurate';
+    return null;
+  }
 
   Future<void> _stopStream([CameraController? c]) async {
     final controller = c ?? _controller;

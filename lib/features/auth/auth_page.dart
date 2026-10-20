@@ -1,6 +1,7 @@
 import 'package:filosign/features/auth/legal_document_modal.dart';
 import 'package:filosign/features/auth/otp_verification_screen.dart';
 import 'package:filosign/features/home/home_page.dart';
+import 'package:filosign/app_version.dart';
 import 'package:filosign/widgets/captcha_dialog.dart';
 import 'package:flutter/material.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -792,7 +793,16 @@ Future<void> _openPrivacy() async {
                 ),
                 child: ConstrainedBox(
                   constraints: const BoxConstraints(maxWidth: 1120),
-                  child: _buildFormCard(),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.stretch,
+                    children: [
+                      _buildFormCard(),
+                      const SizedBox(height: 16),
+                      const Text(kAppVersionLabel,
+                          textAlign: TextAlign.center,
+                          style: TextStyle(color: Color(0xFF6B8581), fontSize: 12)),
+                    ],
+                  ),
                 ),
               );
             },

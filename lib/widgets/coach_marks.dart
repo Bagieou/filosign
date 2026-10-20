@@ -30,19 +30,21 @@ class CoachMarks {
       return;
     }
     if (!context.mounted) return;
-    final overlay = Overlay.maybeOf(context);
-    if (overlay == null) return;
-    late OverlayEntry entry;
-    entry = OverlayEntry(
-      builder: (_) => _CoachOverlay(
+    // A dialog route (not a bare overlay): the phone's Back button closes the
+    // tour like Skip instead of leaving the dimmed layer stuck on screen.
+    await showGeneralDialog<void>(
+      context: context,
+      barrierDismissible: false,
+      barrierColor: Colors.transparent,
+      transitionDuration: const Duration(milliseconds: 150),
+      pageBuilder: (dialogContext, _, _) => _CoachOverlay(
         steps: steps,
-        onDone: () {
-          entry.remove();
-          prefs?.setBool(_prefKey, true);
-        },
+        onDone: () => Navigator.of(dialogContext).pop(),
       ),
     );
-    overlay.insert(entry);
+    try {
+      await prefs.setBool(_prefKey, true);
+    } catch (_) {}
   }
 }
 

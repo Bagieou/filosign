@@ -4,6 +4,7 @@
   import 'package:flutter/material.dart';
 
   import '../../app_settings.dart';
+  import '../../app_version.dart';
   import '../../widgets/coach_marks.dart';
   import '../auth/auth_page.dart' as auth;
   import '../auth/otp_verification_screen.dart';
@@ -106,7 +107,12 @@
               subtitle: 'Update your account password',
               onTap: _changePasswordOtpFlow
             ),
-            const SizedBox(height: 20),
+            const SizedBox(height: 14),
+            const Center(
+              child: Text(kAppVersionLabel,
+                  style: TextStyle(color: Color(0xFF6B8581), fontSize: 12)),
+            ),
+            const SizedBox(height: 14),
             SizedBox(
               width: double.infinity,
               child: OutlinedButton.icon(

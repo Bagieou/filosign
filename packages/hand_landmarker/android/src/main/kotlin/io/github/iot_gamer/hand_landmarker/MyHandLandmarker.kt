@@ -83,6 +83,7 @@ class MyHandLandmarker(private val context: Context) {
             }
             .setErrorListener { error ->
                 android.util.Log.e("HandLandmarker", "MediaPipe Error: ${error.message}")
+                sendError("MediaPipe: ${error.message}")
             }
             .build()
             
@@ -99,15 +100,19 @@ class MyHandLandmarker(private val context: Context) {
     private val busy = java.util.concurrent.atomic.AtomicBoolean(false)
     private var lastTimestampMs = 0L
 
-    // Buffers are reused: allocating ~3 MB per frame (planes, pixels, bitmap)
-    // made weak phones spend their time in garbage collection. Only touched
-    // while `busy` is held, so the next frame can't overwrite them early.
+    // The plane copies and the pixel array are reused (less garbage on weak
+    // phones); only touched while `busy` is held. The Bitmap is NOT reused:
+    // MPImage.close() recycles it, so each frame gets a fresh one (as upstream).
     private var yArr = ByteArray(0)
     private var uArr = ByteArray(0)
     private var vArr = ByteArray(0)
     private var argb = IntArray(0)
-    private val bitmaps = arrayOfNulls<Bitmap>(3)    // ring: MediaPipe may still read the last one
-    private var nextBitmap = 0
+
+    /** Reports a failure to the app instead of failing silently (shown on screen). */
+    private fun sendError(msg: String?) {
+        val safe = (msg ?: "unknown").replace("\\", "/").replace("\"", "'").take(160)
+        HandLandmarkerPlugin.sendLandmarks("{\"e\":\"$safe\",\"h\":[]}")
+    }
 
     /** Timing for the app's debug panel: YUV->RGB ms and frame->result ms (moving averages). */
     @Volatile var convertMs = 0.0
@@ -145,6 +150,7 @@ class MyHandLandmarker(private val context: Context) {
                 mpImage.close()
             } catch (e: Exception) {
                 android.util.Log.e("HandLandmarker", "processFrame failed: ${e.message}")
+                sendError("processFrame: ${e.javaClass.simpleName}: ${e.message}")
             } finally {
                 busy.set(false)
             }
@@ -158,8 +164,9 @@ class MyHandLandmarker(private val context: Context) {
         return out
     }
 
-    /** Integer YUV->ARGB (same math as [yuvToRgbBitmap]) into reused buffers;
-     *  each chroma sample is decoded once for its 2x2 block of pixels. */
+    /** Integer YUV->ARGB (same math as [yuvToRgbBitmap]) into the reused pixel
+     *  array; each chroma sample is decoded once for its 2x2 block. Returns a
+     *  NEW bitmap (createBitmap copies the pixels, like the upstream code). */
     private fun yuvToBitmap(
         width: Int, height: Int, yRowStride: Int, uvRowStride: Int, uvPixelStride: Int
     ): Bitmap {
@@ -190,14 +197,7 @@ class MyHandLandmarker(private val context: Context) {
             }
             j += 2
         }
-        var bmp = bitmaps[nextBitmap]
-        if (bmp == null || bmp.width != width || bmp.height != height) {
-            bmp = Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888)
-            bitmaps[nextBitmap] = bmp
-        }
-        nextBitmap = (nextBitmap + 1) % bitmaps.size
-        bmp!!.setPixels(px, 0, width, 0, 0, width, height)
-        return bmp
+        return Bitmap.createBitmap(px, width, height, Bitmap.Config.ARGB_8888)
     }
 
     private fun pack(yb: Byte, rv: Int, guv: Int, bu: Int): Int {

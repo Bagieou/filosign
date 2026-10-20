@@ -68,7 +68,7 @@ class _HomePageState extends State<HomePage> {
               'Learn every day to grow your streak.'),
           CoachStep(_tourLearn, 'Learn',
               'Watch the lesson videos by category, then sign each one with your camera. '
-                  'Pass a category quiz with 90% to unlock the next.'),
+                  'Pass a category quiz with 70% to unlock the next.'),
           CoachStep(_tourPractice, 'Practice',
               'Practice signs from categories you have studied. The camera tells you if your sign is correct.'),
           CoachStep(_tourNav, 'Profile and Settings',

@@ -68,6 +68,10 @@ class HandLandmarkerPlugin {
   /// conversion ms and frame -> result ms (moving averages).
   static double lastConvertMs = 0, lastLatencyMs = 0;
 
+  /// FiloSign: the last native failure ({"e": ...}), null once a good
+  /// result arrives. The camera screen shows it instead of failing silently.
+  static String? lastError;
+
   Stream<List<Hand>> get landmarkStream {
     _landmarkStream ??= _eventChannel.receiveBroadcastStream().map((event) {
       final String resultString = event as String;
@@ -77,6 +81,11 @@ class HandLandmarkerPlugin {
       final decoded = jsonDecode(resultString);
       List<dynamic> parsedResult;
       if (decoded is Map<String, dynamic>) {
+        if (decoded['e'] != null) {
+          lastError = decoded['e'].toString();
+          return <Hand>[];
+        }
+        lastError = null;
         lastConvertMs = (decoded['c'] as num?)?.toDouble() ?? 0;
         lastLatencyMs = (decoded['l'] as num?)?.toDouble() ?? 0;
         parsedResult = decoded['h'] as List<dynamic>? ?? const [];
