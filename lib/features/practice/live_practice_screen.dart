@@ -253,11 +253,11 @@ class FeedbackBanner extends StatelessWidget {
     if (notRecognized && !locked) {
       color = Colors.blueGrey.shade600;
       title = 'Not recognized';
-      subtitle = bodyVisible ? 'Do the whole sign, then lower your hands' : _stepBack;
+      subtitle = bodyVisible ? 'Do the whole sign, then hold still or lower your hands' : _stepBack;
     } else if (sign == null && handsVisible) {
       color = const Color(0xFF153B39);
       title = 'Watching…';
-      subtitle = bodyVisible ? 'Finish the sign, then lower your hands' : _stepBack;
+      subtitle = bodyVisible ? 'Finish the sign, then hold still or lower your hands' : _stepBack;
     } else if (sign == null) {
       color = const Color(0xFF153B39);
       title = 'Waiting…';
