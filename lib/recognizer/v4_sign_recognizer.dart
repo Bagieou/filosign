@@ -101,6 +101,10 @@ class V4SignRecognizer implements SignRecognizer {
   final bool letters;
   final List<Interpreter> _interpreters = [];
   final List<IsolateInterpreter> _isoInterpreters = [];
+  /// Words only: models trained without body dropout (location-aware).
+  final List<IsolateInterpreter> _bodyIso = [];
+  /// Which word models judged the latest attempt (for the log).
+  String _lastSet = '';
   /// Shared: the cached models must never run twice at once (IsolateInterpreter
   /// silently skips a run while busy), even across two overlapping screens.
   static bool _predicting = false;
@@ -179,9 +183,19 @@ class V4SignRecognizer implements SignRecognizer {
       interps.add(interp);
       iso.add(await IsolateInterpreter.create(address: interp.address));
     }
+    // Words: a second set trained WITHOUT body dropout (2026-10-14), used
+    // when the body is visible - see [_infer].
+    final bodyInterps = <Interpreter>[], bodyIso = <IsolateInterpreter>[];
+    if (head == 'words') {
+      for (final s in [101, 202, 303]) {
+        final interp = await Interpreter.fromAsset('assets/models/filosign_v4_words_body_seed$s.tflite');
+        bodyInterps.add(interp);
+        bodyIso.add(await IsolateInterpreter.create(address: interp.address));
+      }
+    }
     final raw = await rootBundle.loadString('assets/models/labels_v4_$head.json');
     final labels = (jsonDecode(raw) as List<dynamic>).map((e) => e.toString()).toList();
-    return _HeadModels(interps, iso, labels);
+    return _HeadModels(interps, iso, labels, bodyInterps, bodyIso);
   }
 
   /// Load both heads in the background (e.g. after the app starts).
@@ -197,6 +211,7 @@ class V4SignRecognizer implements SignRecognizer {
     final m = await _models(headName);
     _interpreters.addAll(m.interpreters);
     _isoInterpreters.addAll(m.isolates);
+    _bodyIso.addAll(m.bodyIsolates);
     _labels = m.labels;
     _ready = true;
   }
@@ -380,8 +395,9 @@ class V4SignRecognizer implements SignRecognizer {
 
   /// Averaged probabilities + each model's own, for the models in [which].
   Future<(List<double>, List<List<double>>)?> _run(
-      List<List<List<double>>> input, List<int> which) async {
-    final models = [for (final i in which) if (i < _isoInterpreters.length) _isoInterpreters[i]];
+      List<List<List<double>>> input, List<int> which, {bool body = false}) async {
+    final set = body ? _bodyIso : _isoInterpreters;
+    final models = [for (final i in which) if (i < set.length) set[i]];
     if (models.isEmpty) return null;
     final perModel = <List<double>>[];
     for (final interp in models) {
@@ -403,10 +419,20 @@ class V4SignRecognizer implements SignRecognizer {
   }
 
   /// All 3 models on a whole attempt (the end-of-sign decision).
+  /// Word signs with the body (face + shoulders) in view on at least half the
+  /// frames use the models trained WITHOUT body dropout: the dropout models
+  /// (needed when the body is out of view) mostly ignore WHERE the hand is -
+  /// a teammate's grandmother (chin) read as grandfather (forehead) at 98%.
+  /// Replayed (src/compare_sets_v4.py): hand moved chin <-> forehead,
+  /// right answer 6% -> 56%; held-out with body 91.1% / 1.9% wrong, without
+  /// body unchanged (90.9% / 1.7%); teammate captures 0/20 -> 3/20.
   Future<(List<double>, List<List<double>>)?> _infer(List<CanonFrame> window) async {
     final input = await _input(window);
     if (input == null) return null;
-    return _run(input, const [0, 1, 2]);
+    final withBody = window.where((f) => f.poseOk).length >= 0.5 * window.length;
+    final body = _bodyIso.length == 3 && withBody;
+    _lastSet = body ? 'body' : 'dropout';
+    return _run(input, const [0, 1, 2], body: body);
   }
 
   /// The 3-model check behind a live lock: same rule as the end of a sign.
@@ -468,7 +494,7 @@ class V4SignRecognizer implements SignRecognizer {
       if (_log) {
         final line = 'FILOSIGN_FINAL ${_labels[idx]} ${(conf * 100).round()}% '
             'raw ${(probs[idx] * 100).round()}% models ${j.models} '
-            'frames ${frames.length} -> ${ok ? "LOCK" : "not recognized"}';
+            'frames ${frames.length} set $_lastSet -> ${ok ? "LOCK" : "not recognized"}';
         debugPrint(line);
         events.add('${_clock.elapsedMilliseconds} $line');
       }
@@ -654,6 +680,7 @@ class V4SignRecognizer implements SignRecognizer {
     _ready = false;
     _attempt++;
     _isoInterpreters.clear();
+    _bodyIso.clear();
     _interpreters.clear();
   }
 }
@@ -662,7 +689,10 @@ class _HeadModels {
   final List<Interpreter> interpreters;
   final List<IsolateInterpreter> isolates;
   final List<String> labels;
-  _HeadModels(this.interpreters, this.isolates, this.labels);
+  final List<Interpreter> bodyInterpreters;
+  final List<IsolateInterpreter> bodyIsolates;
+  _HeadModels(this.interpreters, this.isolates, this.labels,
+      [this.bodyInterpreters = const [], this.bodyIsolates = const []]);
 }
 
 /// Runs in a background isolate: canonical frames -> model input [1][30][F].
