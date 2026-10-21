@@ -26,7 +26,6 @@ class _LivePracticeScreenState extends State<LivePracticeScreen> {
   late final Map<String, String> _titleByLabel = {
     for (final l in widget.category.lessons) modelLabelForLesson(l.id): l.title
   };
-  bool _dominantLeft = false;
   int _resetToken = 0;
   LiveSignState? _state;
   V4SignRecognizer? _recognizer;
@@ -92,15 +91,6 @@ class _LivePracticeScreenState extends State<LivePracticeScreen> {
               icon: const Icon(Icons.bug_report_outlined),
               onPressed: _debugCapture,
             ),
-          TextButton.icon(
-            style: TextButton.styleFrom(foregroundColor: Colors.white),
-            onPressed: () => setState(() {
-              _dominantLeft = !_dominantLeft;
-              _state = null;
-            }),
-            icon: const Icon(Icons.back_hand_outlined),
-            label: Text(_dominantLeft ? 'Left hand' : 'Right hand'),
-          ),
         ],
       ),
       body: Stack(
@@ -109,8 +99,7 @@ class _LivePracticeScreenState extends State<LivePracticeScreen> {
           LiveSignView(
             candidates: _titleByLabel.keys.toList(),
             letters: widget.category.id == lettersCategoryId,
-            dominantLeft: _dominantLeft,
-            resetToken: _resetToken,
+            resetToken: _resetToken, // right hand only (dominantLeft stays false)
             onUpdate: (st) => setState(() => _state = st),
             onRecognizer: (r) => _recognizer = r,
             warningTop: 96, // below the hint card
