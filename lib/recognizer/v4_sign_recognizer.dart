@@ -11,6 +11,7 @@ import 'package:tflite_flutter/tflite_flutter.dart';
 import '../test_build.dart';
 import 'sign_recognizer.dart';
 import 'v4/canonical_v4.dart';
+import 'v4/hold_detector.dart';
 import 'v4/features_v4.dart';
 
 /// FiloSign v4 recognizer (Dual-Layer). MediaPipe Hands + Pose -> canonical
@@ -78,17 +79,14 @@ class V4SignRecognizer implements SignRecognizer {
   /// "Sign, then hold still" also ends a word sign: people taught by the old
   /// live lock hold the sign instead of lowering the hands (teammate captures,
   /// 2026-10-21: hands still up at the end of all 13). The signing (higher)
-  /// hand holding < 0.6 hand-sizes/s for 0.5 s (signing: median 1.7), after
-  /// moving > 1.5, >= 1 s into the attempt, judges the whole attempt at 85%
-  /// (a hold can be a pause mid-sign); a miss there is silent. Replayed
-  /// (src/hold_sim_v4.py): held-out 91.3% correct / 1.7% wrong (drop only
-  /// 91.5 / 0.8; old live lock 89.2 / 3.4).
-  static const double _stillSpeed = 0.6, _movedSpeed = 1.5, _holdS = 0.5, _holdMinS = 1.0;
+  /// hand holding < 0.6 hand-sizes/s for 1.0 s (signing: median 1.7), after
+  /// moving > 1.5, >= 1 s into the attempt, judges the whole attempt at 85%;
+  /// a miss there is silent. 1.0 s, not 0.5: a short pause mid-sign (e.g. the
+  /// "5" handshape on the way to "9") was judged as a finished sign.
+  /// Replayed (src/hold_sim_v4.py, HOLD_S): 0.5 s 91.3% correct / 1.7% wrong,
+  /// 1.0 s 91.5% / 0.8% = same as judging only when the hands drop.
   static const double _holdLock = 0.85;
-  final List<(double, double)> _speeds = []; // (t, hand-sizes/s)
-  (double, double, double)? _prevHand; // centre x, y, t
-  double _peakSpeed = 0;
-  bool _holdArmed = true;
+  final HoldDetector _hold = HoldDetector();
   static const double _minMargin = 0.25;
   /// Minimum probability the best sign must have among ALL signs (before the
   /// category filter). Random movements spread probability thin.
@@ -239,7 +237,7 @@ class V4SignRecognizer implements SignRecognizer {
     if (!_ready || _locked || !hasImageSize) return _last;
     _candidates = candidates;
     if (hands.isEmpty) {
-      _prevHand = null;
+      _hold.handsLost();
       _handsAway++;
       if (_handsAway == _handsAwayReset) {
         // hands dropped: judge the whole attempt once, the way training saw
@@ -313,39 +311,11 @@ class V4SignRecognizer implements SignRecognizer {
   /// isotropic image units - same as src/hold_sim_v4.py.
   void _checkHold(List<List<double>> hands, double t, List<String> candidates) {
     final s = math.max(_imgW, _imgH);
-    final sx = _imgW / s, sy = _imgH / s;
     var h = hands.first;
     for (final o in hands) {
       if (o[1] < h[1]) h = o; // smaller wrist y = higher hand
     }
-    final size = math.max(
-        math.sqrt(math.pow((h[27] - h[0]) * sx, 2) + math.pow((h[28] - h[1]) * sy, 2)), 1e-3);
-    var cx = 0.0, cy = 0.0;
-    for (var j = 0; j < kHandLm; j++) {
-      cx += h[j * 3] * sx;
-      cy += h[j * 3 + 1] * sy;
-    }
-    cx /= kHandLm;
-    cy /= kHandLm;
-    final prev = _prevHand;
-    _prevHand = (cx, cy, t);
-    if (prev == null || t <= prev.$3) return;
-    final sp = math.sqrt(math.pow(cx - prev.$1, 2) + math.pow(cy - prev.$2, 2)) / size / (t - prev.$3);
-    _speeds.add((t, sp));
-    final first = _speeds.first.$1;
-    while (_speeds.isNotEmpty && _speeds.first.$1 < t - 1.0) {
-      _speeds.removeAt(0);
-    }
-    if (sp > _movedSpeed) {
-      _peakSpeed = math.max(_peakSpeed, sp);
-      _holdArmed = true; // moving again: the next hold is judged again
-    }
-    if (!_holdArmed || _peakSpeed <= _movedSpeed || _buffer.isEmpty) return;
-    if (t - _buffer.first.t < _holdMinS || first > t - _holdS) return;
-    final recent = [for (final e in _speeds) if (e.$1 >= t - _holdS) e.$2];
-    if (recent.length < 5) return;
-    if (recent.where((v) => v < _stillSpeed).length < 0.8 * recent.length) return;
-    _holdArmed = false;
+    if (!_hold.add(h, t, _imgW / s, _imgH / s) || _buffer.isEmpty) return;
     _event('FILOSIGN_HOLD at ${(t - _buffer.first.t).toStringAsFixed(1)}s');
     _finalDecision(List.of(_buffer), List.of(candidates), _attempt, const [], _events,
         _holdLock);
@@ -645,10 +615,7 @@ class V4SignRecognizer implements SignRecognizer {
     _rawBuffer.clear();
     _events.clear();
     _buffer.clear();
-    _speeds.clear();
-    _prevHand = null;
-    _peakSpeed = 0;
-    _holdArmed = true;
+    _hold.reset();
     _voteClass.clear();
     _voteConf.clear();
     _framesSincePredict = 0;
