@@ -85,11 +85,23 @@ class _SharedDetectors {
     if (Platform.isIOS) {
       _iosInit = _ios.invokeMethod<void>('initialize');
     } else {
-      final created = HandLandmarkerPlugin.create(
-        numHands: 2,
-        minHandDetectionConfidence: 0.5,
-        delegate: HandLandmarkerDelegate.gpu,
-      );
+      // GPU first: measured on a Reno 10, GPU 33 ms / 22 results per second
+      // vs CPU 73-97 ms / 16. Phones whose GPU can't run it fall back to the
+      // CPU instead of failing ("Hand detection could not start").
+      HandLandmarkerPlugin created;
+      try {
+        created = HandLandmarkerPlugin.create(
+          numHands: 2,
+          minHandDetectionConfidence: 0.5,
+          delegate: HandLandmarkerDelegate.gpu,
+        );
+      } catch (_) {
+        created = HandLandmarkerPlugin.create(
+          numHands: 2,
+          minHandDetectionConfidence: 0.5,
+          delegate: HandLandmarkerDelegate.cpu,
+        );
+      }
       created.landmarkStream.listen(_results.add, onError: (_) {});
       _android = created;
     }
