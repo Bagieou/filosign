@@ -215,8 +215,6 @@ class _LessonLiveSignScreenState extends State<LessonLiveSignScreen> {
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
             Expanded(child: _liveView()),
-            if (_hintAvailable && !_done) _watchAgain(),
-            if (_done) _feedback(),
           ],
         ),
       ),
@@ -242,22 +240,34 @@ class _LessonLiveSignScreenState extends State<LessonLiveSignScreen> {
             children: [
               const Icon(Icons.videocam_rounded, color: _teal),
               const SizedBox(width: 8),
+              // one line, always: a long name shrinks instead of wrapping, so
+              // the camera never moves when the badge text changes
               Expanded(
-                child: Text.rich(TextSpan(children: [
-                  const TextSpan(
-                      text: 'Sign:  ',
-                      style: TextStyle(color: _muted, fontSize: 16)),
-                  TextSpan(
-                      text: widget.lesson.title,
-                      style: const TextStyle(
-                          color: _ink,
-                          fontSize: 22,
-                          fontWeight: FontWeight.w800)),
-                ])),
+                child: FittedBox(
+                  fit: BoxFit.scaleDown,
+                  alignment: Alignment.centerLeft,
+                  child: Text.rich(
+                    TextSpan(children: [
+                      const TextSpan(
+                          text: 'Sign:  ',
+                          style: TextStyle(color: _muted, fontSize: 16)),
+                      TextSpan(
+                          text: widget.lesson.title,
+                          style: const TextStyle(
+                              color: _ink,
+                              fontSize: 22,
+                              fontWeight: FontWeight.w800)),
+                    ]),
+                    maxLines: 1,
+                  ),
+                ),
               ),
+              const SizedBox(width: 8),
               Container(
+                width: 132, // fixed: "Show hands" / "Hands detected" / "Try again"
+                alignment: Alignment.center,
                 padding:
-                    const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+                    const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
                 decoration: BoxDecoration(
                   color: wrongLock
                       ? Colors.red.shade50
@@ -313,12 +323,30 @@ class _LessonLiveSignScreenState extends State<LessonLiveSignScreen> {
                               widget.category.id == lettersCategoryId,
                         ),
                       ),
+                    // shown ON the camera, so the camera never resizes
+                    if (_hintAvailable && !_done)
+                      Positioned(
+                        bottom: 96,
+                        left: 0,
+                        right: 0,
+                        child: Center(child: _watchAgain()),
+                      ),
+                    if (_done)
+                      Positioned.fill(
+                        child: Container(
+                          color: Colors.black.withValues(alpha: 0.25),
+                          alignment: Alignment.center,
+                          padding: const EdgeInsets.symmetric(horizontal: 28),
+                          child: _feedback(),
+                        ),
+                      ),
                   ],
                 ),
               ),
             ),
           ),
         ),
+        const SizedBox(height: 12),
       ],
     );
   }
@@ -327,15 +355,16 @@ class _LessonLiveSignScreenState extends State<LessonLiveSignScreen> {
   /// pop-up the quiz shows after a wrong answer.
   Widget _watchAgain() {
     return Padding(
-      padding: const EdgeInsets.fromLTRB(16, 10, 16, 6),
+      padding: EdgeInsets.zero,
       child: OutlinedButton.icon(
         onPressed: _showHint,
         icon: const Icon(Icons.ondemand_video_rounded, size: 20),
         label: const Text('Watch again'),
         style: OutlinedButton.styleFrom(
           foregroundColor: _teal,
+          backgroundColor: Colors.white,
           side: const BorderSide(color: _teal, width: 1.5),
-          padding: const EdgeInsets.symmetric(vertical: 14),
+          padding: const EdgeInsets.symmetric(vertical: 12, horizontal: 20),
           shape:
               RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
           textStyle:
@@ -345,32 +374,31 @@ class _LessonLiveSignScreenState extends State<LessonLiveSignScreen> {
     );
   }
 
-  /// Same green bar as the quiz's correct answer, without the point.
+  /// Same card as the quiz's correct answer, without the point; centred on
+  /// the camera.
   Widget _feedback() {
-    final color = Colors.green.shade600;
     return Container(
-      margin: const EdgeInsets.fromLTRB(16, 8, 16, 16),
-      padding: const EdgeInsets.all(16),
-      decoration:
-          BoxDecoration(color: color, borderRadius: BorderRadius.circular(18)),
-      child: Row(
+      constraints: const BoxConstraints(maxWidth: 340),
+      padding: const EdgeInsets.fromLTRB(24, 22, 24, 22),
+      decoration: BoxDecoration(
+        color: Colors.green.shade600,
+        borderRadius: BorderRadius.circular(22),
+        boxShadow: const [
+          BoxShadow(color: Color(0x40000000), blurRadius: 24, offset: Offset(0, 8)),
+        ],
+      ),
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
         children: [
-          const Icon(Icons.check_circle_rounded, color: Colors.white, size: 34),
-          const SizedBox(width: 12),
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                const Text('Correct!',
-                    style: TextStyle(
-                        color: Colors.white,
-                        fontSize: 18,
-                        fontWeight: FontWeight.w800)),
-                Text(widget.lesson.title,
-                    style: const TextStyle(color: Colors.white, fontSize: 13)),
-              ],
-            ),
-          ),
+          const Icon(Icons.check_circle_rounded, color: Colors.white, size: 56),
+          const SizedBox(height: 8),
+          const Text('Correct!',
+              style: TextStyle(
+                  color: Colors.white, fontSize: 24, fontWeight: FontWeight.w800)),
+          const SizedBox(height: 2),
+          Text(widget.lesson.title,
+              textAlign: TextAlign.center,
+              style: const TextStyle(color: Colors.white, fontSize: 15)),
         ],
       ),
     );

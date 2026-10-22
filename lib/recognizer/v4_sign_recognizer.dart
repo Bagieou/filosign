@@ -396,11 +396,16 @@ class V4SignRecognizer implements SignRecognizer {
   /// Replayed (src/compare_sets_v4.py): hand moved chin <-> forehead,
   /// right answer 6% -> 56%; held-out with body 91.1% / 1.9% wrong, without
   /// body unchanged (90.9% / 1.7%); teammate captures 0/20 -> 3/20.
+  /// Numbers always use the dropout models: there the motion / full sequence
+  /// matters, not location, and the location-aware set read "nine" (5 shape
+  /// then a motion) as "five": on-device attempts 2/14 vs 14/14 (eight 2/5 vs
+  /// 5/5); held-out numbers 90% vs 92%. Every other category is unchanged.
   Future<(List<double>, List<List<double>>)?> _infer(List<CanonFrame> window) async {
     final input = await _input(window);
     if (input == null) return null;
     final withBody = window.where((f) => f.poseOk).length >= 0.5 * window.length;
-    final body = _bodyIso.length == 3 && withBody;
+    final numbers = _candidates.contains('nine') && _candidates.contains('five');
+    final body = _bodyIso.length == 3 && withBody && !numbers;
     _lastSet = body ? 'body' : 'dropout';
     return _run(input, const [0, 1, 2], body: body);
   }

@@ -308,8 +308,12 @@ class _QuizScreenState extends State<QuizScreen> {
           ),
         ),
         const SizedBox(height: 14),
+        // the answer card is shown ON the question, so nothing resizes
         Expanded(
-          child: q.live
+          child: Stack(
+            children: [
+              Positioned.fill(
+                child: q.live
               ? _LiveQuestion(
                   key: ValueKey('live$_index'),
                   lesson: q.lesson,
@@ -325,8 +329,20 @@ class _QuizScreenState extends State<QuizScreen> {
                   picked: _picked,
                   onPick: (l) => _answer(l == q.lesson, l.title, picked: l),
                 ),
+              ),
+              if (_correct != null)
+                Positioned.fill(
+                  child: Container(
+                    color: Colors.black.withValues(alpha: 0.25),
+                    alignment: Alignment.center,
+                    padding: const EdgeInsets.symmetric(horizontal: 28),
+                    child: _feedback(q),
+                  ),
+                ),
+            ],
+          ),
         ),
-        if (_correct != null) _feedback(q),
+        const SizedBox(height: 12),
       ],
     );
   }
@@ -335,45 +351,55 @@ class _QuizScreenState extends State<QuizScreen> {
     final ok = _correct!;
     final color = ok ? Colors.green.shade600 : Colors.red.shade600;
     return Container(
-      margin: const EdgeInsets.fromLTRB(16, 8, 16, 16),
-      padding: const EdgeInsets.all(16),
-      decoration:
-          BoxDecoration(color: color, borderRadius: BorderRadius.circular(18)),
-      child: Row(
+      constraints: const BoxConstraints(maxWidth: 340),
+      padding: const EdgeInsets.fromLTRB(24, 22, 24, 18),
+      decoration: BoxDecoration(
+        color: color,
+        borderRadius: BorderRadius.circular(22),
+        boxShadow: const [
+          BoxShadow(color: Color(0x40000000), blurRadius: 24, offset: Offset(0, 8)),
+        ],
+      ),
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
         children: [
           Icon(ok ? Icons.check_circle_rounded : Icons.cancel_rounded,
-              color: Colors.white, size: 34),
-          const SizedBox(width: 12),
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(ok ? 'Correct!  +1 point' : 'Incorrect',
-                    style: const TextStyle(
-                        color: Colors.white,
-                        fontSize: 18,
-                        fontWeight: FontWeight.w800)),
-                Text(
-                  ok
-                      ? q.lesson.title
-                      : 'Answer: ${q.lesson.title}'
-                          '${_answerText == null ? '' : ' · yours: $_answerText'}',
-                  style: const TextStyle(color: Colors.white, fontSize: 13),
-                ),
-              ],
-            ),
+              color: Colors.white, size: 56),
+          const SizedBox(height: 8),
+          Text(ok ? 'Correct!  +1 point' : 'Incorrect',
+              textAlign: TextAlign.center,
+              style: const TextStyle(
+                  color: Colors.white, fontSize: 24, fontWeight: FontWeight.w800)),
+          const SizedBox(height: 4),
+          Text(
+            ok
+                ? q.lesson.title
+                : 'Answer: ${q.lesson.title}'
+                    '${_answerText == null ? '' : ' · yours: $_answerText'}',
+            textAlign: TextAlign.center,
+            style: const TextStyle(color: Colors.white, fontSize: 15),
           ),
-          if (!ok)
-            TextButton(
-              onPressed: () => _showHint(q.lesson),
-              style: TextButton.styleFrom(foregroundColor: Colors.white),
-              child: const Text('Hint'),
-            ),
-          FilledButton(
-            onPressed: _next,
-            style: FilledButton.styleFrom(
-                backgroundColor: Colors.white, foregroundColor: color),
-            child: Text(_index + 1 >= _questions.length ? 'Finish' : 'Next'),
+          const SizedBox(height: 16),
+          Row(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              if (!ok) ...[
+                OutlinedButton(
+                  onPressed: () => _showHint(q.lesson),
+                  style: OutlinedButton.styleFrom(
+                      foregroundColor: Colors.white,
+                      side: const BorderSide(color: Colors.white)),
+                  child: const Text('Hint'),
+                ),
+                const SizedBox(width: 10),
+              ],
+              FilledButton(
+                onPressed: _next,
+                style: FilledButton.styleFrom(
+                    backgroundColor: Colors.white, foregroundColor: color),
+                child: Text(_index + 1 >= _questions.length ? 'Finish' : 'Next'),
+              ),
+            ],
           ),
         ],
       ),
@@ -556,22 +582,34 @@ class _LiveQuestionState extends State<_LiveQuestion> {
             children: [
               const Icon(Icons.videocam_rounded, color: _teal),
               const SizedBox(width: 8),
+              // one line, always: a long name shrinks instead of wrapping, so
+              // the camera never moves when the badge text changes
               Expanded(
-                child: Text.rich(TextSpan(children: [
-                  const TextSpan(
-                      text: 'Sign:  ',
-                      style: TextStyle(color: _muted, fontSize: 16)),
-                  TextSpan(
-                      text: widget.lesson.title,
-                      style: const TextStyle(
-                          color: _ink,
-                          fontSize: 22,
-                          fontWeight: FontWeight.w800)),
-                ])),
+                child: FittedBox(
+                  fit: BoxFit.scaleDown,
+                  alignment: Alignment.centerLeft,
+                  child: Text.rich(
+                    TextSpan(children: [
+                      const TextSpan(
+                          text: 'Sign:  ',
+                          style: TextStyle(color: _muted, fontSize: 16)),
+                      TextSpan(
+                          text: widget.lesson.title,
+                          style: const TextStyle(
+                              color: _ink,
+                              fontSize: 22,
+                              fontWeight: FontWeight.w800)),
+                    ]),
+                    maxLines: 1,
+                  ),
+                ),
               ),
+              const SizedBox(width: 8),
               Container(
+                width: 112, // fixed: "Show hands" / "12s"
+                alignment: Alignment.center,
                 padding:
-                    const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+                    const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
                 decoration: BoxDecoration(
                   color:
                       _left <= 3 ? Colors.red.shade50 : const Color(0xFFE6F4F1),
