@@ -284,44 +284,41 @@ class _HomePageState extends State<HomePage> {
             ),
           ),
           const SizedBox(height: 13),
-          Row(
-            children: [
-              Expanded(
-                key: _tourLearn,
-                child: _buildActionButton(
-                  icon: Icons.school_rounded,
-                  title: 'Learn',
-                  subtitle: 'New lessons',
-                  color: const Color(0xFF087F73),
-                  onTap: () => Navigator.push(
-                    context,
-                    MaterialPageRoute(builder: (_) => const LearnScreen()),
-                  ),
-                ),
+          // one tidy list: every entry the same size, whether 2 or 3 of them
+          KeyedSubtree(
+            key: _tourLearn,
+            child: _buildActionButton(
+              icon: Icons.school_rounded,
+              title: 'Learn',
+              subtitle: 'Video lessons by category',
+              color: const Color(0xFF087F73),
+              onTap: () => Navigator.push(
+                context,
+                MaterialPageRoute(builder: (_) => const LearnScreen()),
               ),
-              const SizedBox(width: 14),
-              Expanded(
-                key: _tourPractice,
-                child: _buildActionButton(
-                  icon: Icons.fitness_center_rounded,
-                  title: 'Practice',
-                  subtitle: 'Test your skills',
-                  color: const Color(0xFFE8782F),
-                   onTap: () => Navigator.push(
-                    context,
-                    MaterialPageRoute(builder: (_) => const PracticeScreen()),
-                  ),
-                ),
+            ),
+          ),
+          const SizedBox(height: 12),
+          KeyedSubtree(
+            key: _tourPractice,
+            child: _buildActionButton(
+              icon: Icons.front_hand_rounded,
+              title: 'Practice',
+              subtitle: 'Sign with your camera and get feedback',
+              color: const Color(0xFFE8782F),
+              onTap: () => Navigator.push(
+                context,
+                MaterialPageRoute(builder: (_) => const PracticeScreen()),
               ),
-            ],
+            ),
           ),
           if (kTestBuild) ...[
             // test version: any category's quiz, without the lessons first
-            const SizedBox(height: 14),
+            const SizedBox(height: 12),
             _buildActionButton(
               icon: Icons.quiz_rounded,
               title: 'Quiz',
-              subtitle: 'Any category',
+              subtitle: 'Test yourself on any category',
               color: const Color(0xFF4F6BED),
               onTap: () => Navigator.push(
                 context,
@@ -345,6 +342,7 @@ class _HomePageState extends State<HomePage> {
     );
   }
 
+  /// One full-width row: icon, title + what it is for, arrow.
   Widget _buildActionButton({
     required IconData icon,
     required String title,
@@ -352,43 +350,53 @@ class _HomePageState extends State<HomePage> {
     required Color color,
     required VoidCallback onTap,
   }) {
-    return InkWell(
-      onTap: onTap,
-      borderRadius: BorderRadius.circular(20),
-      child: Container(
-        padding: const EdgeInsets.all(18),
-        decoration: BoxDecoration(
-          color: Colors.white,
-          borderRadius: BorderRadius.circular(20),
-          border: Border.all(color: const Color(0xFFE2EEEB)),
-        ),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Container(
-              width: 44,
-              height: 44,
-              decoration: BoxDecoration(
-                color: color.withValues(alpha: 0.12),
-                borderRadius: BorderRadius.circular(13),
+    return Material(
+      color: Colors.white,
+      borderRadius: BorderRadius.circular(18),
+      child: InkWell(
+        onTap: onTap,
+        borderRadius: BorderRadius.circular(18),
+        child: Container(
+          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
+          decoration: BoxDecoration(
+            borderRadius: BorderRadius.circular(18),
+            border: Border.all(color: const Color(0xFFE2EEEB)),
+          ),
+          child: Row(
+            children: [
+              Container(
+                width: 48,
+                height: 48,
+                decoration: BoxDecoration(
+                  color: color.withValues(alpha: 0.12),
+                  borderRadius: BorderRadius.circular(14),
+                ),
+                child: Icon(icon, color: color, size: 26),
               ),
-              child: Icon(icon, color: color),
-            ),
-            const SizedBox(height: 16),
-            Text(
-              title,
-              style: const TextStyle(
-                color: Color(0xFF153B39),
-                fontSize: 18,
-                fontWeight: FontWeight.w800,
+              const SizedBox(width: 14),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      title,
+                      style: const TextStyle(
+                        color: Color(0xFF153B39),
+                        fontSize: 17,
+                        fontWeight: FontWeight.w800,
+                      ),
+                    ),
+                    const SizedBox(height: 2),
+                    Text(
+                      subtitle,
+                      style: const TextStyle(color: Color(0xFF6B8581), fontSize: 13),
+                    ),
+                  ],
+                ),
               ),
-            ),
-            const SizedBox(height: 3),
-            Text(
-              subtitle,
-              style: const TextStyle(color: Color(0xFF6B8581), fontSize: 12),
-            ),
-          ],
+              Icon(Icons.chevron_right_rounded, color: color),
+            ],
+          ),
         ),
       ),
     );
