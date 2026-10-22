@@ -70,9 +70,6 @@ public class HandLandmarkerIosPlugin: NSObject, FlutterPlugin {
     options.runningMode = .video
     options.numHands = 2
     options.minHandDetectionConfidence = 0.5
-    // same as Android: keep tracking a fast-moving (blurred) hand
-    options.minHandPresenceConfidence = 0.3
-    options.minTrackingConfidence = 0.3
     landmarker = try HandLandmarker(options: options)
   }
 

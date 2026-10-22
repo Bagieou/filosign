@@ -232,7 +232,6 @@ class _LiveSignViewState extends State<LiveSignView> with WidgetsBindingObserver
   /// frames so the hand detector keeps up.
   double _handRate = 20;
   int _lastHandMs = 0;
-  int _lastHandsShownMs = 0;
   bool _disposed = false;
   // Hand detector health: a native failure or no results at all must show on
   // screen (a silent failure looked like "the app recognizes nothing").
@@ -337,10 +336,7 @@ class _LiveSignViewState extends State<LiveSignView> with WidgetsBindingObserver
         });
       }
       final p = _recognizer.addFrame(hands, _latestPose, widget.candidates);
-      // A short tracking dropout (fast motion) keeps the last skeleton on
-      // screen for up to 0.3 s instead of blinking.
-      if (hands.isNotEmpty || nowMs - _lastHandsShownMs > 300) _hands.value = hands;
-      if (hands.isNotEmpty) _lastHandsShownMs = nowMs;
+      _hands.value = hands;
       if (hands.isNotEmpty) InactivityGuard.activity(); // signing counts as activity
       _checkHandEdge(hands);
       if (sw != null) {
