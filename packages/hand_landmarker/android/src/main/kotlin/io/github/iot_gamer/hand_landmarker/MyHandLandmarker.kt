@@ -40,6 +40,11 @@ class MyHandLandmarker(private val context: Context) {
             // Switch to LIVE_STREAM mode for async processing
             .setRunningMode(com.google.mediapipe.tasks.vision.core.RunningMode.LIVE_STREAM)
             .setMinHandDetectionConfidence(minHandDetectionConfidence)
+            // FiloSign: keep tracking a fast-moving (blurred) hand instead of
+            // dropping it - on-device dropouts happened at 4.5x the normal hand
+            // speed (default 0.5 for both)
+            .setMinHandPresenceConfidence(0.3f)
+            .setMinTrackingConfidence(0.3f)
             // Listen for results on the background thread
             .setResultListener { result, _ ->
                 // FiloSign: frame -> result delay, sent along for the debug panel

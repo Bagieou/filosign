@@ -58,7 +58,9 @@ class V4SignRecognizer implements SignRecognizer {
     });
   }
   static const int _predictEveryN = 5;
-  static const int _handsAwayReset = 10;
+  static const int _handsAwayMs = 700;
+  int? _awaySinceMs;
+  bool _awayFired = false;
   static const int _bufferMaxMs = 5000;
   // Live window ~ the typical sign length in training (hand-visible span):
   // letters median 2.7 s, words median 1.6 s (p75 2.2 s).
@@ -120,7 +122,6 @@ class V4SignRecognizer implements SignRecognizer {
   final List<int> _voteClass = [];
   final List<double> _voteConf = [];
   int _framesSincePredict = 0;
-  int _handsAway = 0;
   int _attempt = 0;
   final HandSideTracker _sides = HandSideTracker();
   bool _locked = false;
@@ -238,8 +239,12 @@ class V4SignRecognizer implements SignRecognizer {
     _candidates = candidates;
     if (hands.isEmpty) {
       _hold.handsLost();
-      _handsAway++;
-      if (_handsAway == _handsAwayReset) {
+      // "hands dropped" = no hand for 0.7 s (time, not a frame count: a
+      // tracking dropout mid-sign lasted up to 0.47 s, almost the old 10 frames)
+      final now = _clock.elapsedMilliseconds;
+      _awaySinceMs ??= now;
+      if (!_awayFired && now - _awaySinceMs! >= _handsAwayMs) {
+        _awayFired = true;
         // hands dropped: judge the whole attempt once, the way training saw
         // signs (live windows often hold only part of a sign)
         if (_buffer.length >= _minWindowFrames) {
@@ -252,7 +257,8 @@ class V4SignRecognizer implements SignRecognizer {
       }
       return _last;
     }
-    _handsAway = 0;
+    _awaySinceMs = null;
+    _awayFired = false;
     if (_buffer.isEmpty) notRecognized = false; // a new attempt starts
 
     final rawHands = <List<double>>[
@@ -638,7 +644,8 @@ class V4SignRecognizer implements SignRecognizer {
     }
     _attempt++; // drops a pending end-of-attempt decision
     _clearAttempt();
-    _handsAway = 0;
+    _awaySinceMs = null;
+    _awayFired = false;
     _locked = false;
   }
 
