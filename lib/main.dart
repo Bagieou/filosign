@@ -28,7 +28,7 @@ class MainApp extends StatelessWidget {
   Widget build(BuildContext context) {
     return MaterialApp(
       debugShowCheckedModeBanner: false,
-      title: 'Filosign',
+      title: 'FiloSign',
       navigatorKey: appNavigatorKey,
       scaffoldMessengerKey: appMessengerKey,
       theme: ThemeData(

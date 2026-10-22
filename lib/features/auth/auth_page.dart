@@ -410,7 +410,7 @@ Future<void> _openPrivacy() async {
         Icon(Icons.sign_language, color: foreground, size: 30),
         const SizedBox(width: 10),
         Text(
-          'Filosign',
+          'FiloSign',
           style: TextStyle(
             color: foreground,
             fontSize: 24,
@@ -739,7 +739,7 @@ Future<void> _openPrivacy() async {
                 alignment: WrapAlignment.center,
                 children: [
                   Text(
-                    _isSignUp ? 'Already have an account? ' : 'New to Filosign? ',
+                    _isSignUp ? 'Already have an account? ' : 'New to FiloSign? ',
                     style: TextStyle(color: Color(0xFF64807C), fontSize: 13),
                   ),
                   GestureDetector(
