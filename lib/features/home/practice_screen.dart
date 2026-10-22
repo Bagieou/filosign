@@ -71,7 +71,7 @@ class _PracticeScreenState extends State<PracticeScreen> {
 
   List<_PracticeCategory> get _visible => [
         for (final c in _categories)
-          if (kTestBuild ||
+          if (kAllOpen ||
               (_progress.containsKey(kCategoryDbIds[c.id]) &&
                   (!_passedOnly || _progress[kCategoryDbIds[c.id]] == true)))
             c,

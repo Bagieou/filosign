@@ -312,7 +312,7 @@ class _HomePageState extends State<HomePage> {
               ),
             ),
           ),
-          if (kTestBuild) ...[
+          if (kAllOpen) ...[
             // test version: any category's quiz, without the lessons first
             const SizedBox(height: 12),
             _buildActionButton(

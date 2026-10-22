@@ -57,7 +57,7 @@ class _SearchResultsScreenState extends State<SearchResultsScreen> {
   }
 
   Future<bool> _fetchAccess(String categoryId) async {
-    if (kTestBuild || categoryId == 'basic') return true;
+    if (kAllOpen || categoryId == 'basic') return true;
     final dbId = kCategoryDbIds[categoryId];
     if (dbId == null) return false;
     final user = Supabase.instance.client.auth.currentUser;

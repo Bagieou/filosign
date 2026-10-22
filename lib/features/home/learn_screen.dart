@@ -29,11 +29,7 @@ class _LearnScreenState extends State<LearnScreen> {
 
   /// Seeded from the shared set so a recreated screen starts with everything
   /// already known to be unlocked.
-  Map<String, bool> _access = {
-    for (final id in unlockedCategories) id: true,
-    if (kTestBuild)
-      for (final c in _categories) c.id: true,
-  };
+  late Map<String, bool> _access;
 
   String? _justUnlocked;
 
@@ -44,6 +40,12 @@ class _LearnScreenState extends State<LearnScreen> {
   @override
   void initState() {
     super.initState();
+    syncUnlockCache(Supabase.instance.client.auth.currentUser?.id);
+    _access = {
+      for (final id in unlockedCategories) id: true,
+      if (kAllOpen)
+        for (final c in _categories) c.id: true,
+    };
     _load();
   }
 
@@ -73,7 +75,7 @@ class _LearnScreenState extends State<LearnScreen> {
   /// Returns null when the RPC fails — callers keep their previous value
   /// instead of treating the failure as "locked."
   Future<bool?> _fetchAccess(int dbId) async {
-    if (kTestBuild || dbId == kCategoryDbIds['basic']) return true;
+    if (kAllOpen || dbId == kCategoryDbIds['basic']) return true;
     final user = Supabase.instance.client.auth.currentUser;
     if (user == null) return null; // not signed in yet / session restoring
     try {

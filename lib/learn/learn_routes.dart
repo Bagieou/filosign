@@ -12,6 +12,19 @@ final ValueNotifier<int> progressVersion = ValueNotifier<int>(0);
 /// lives outside any widget and survives LearnScreen being disposed and
 /// recreated (e.g. when switching bottom-nav tabs).
 final Set<String> unlockedCategories = {'basic'};
+String? _unlockedUser;
+
+/// The cache belongs to ONE account: when a different account is signed in
+/// (sign-out, then sign-up / sign-in without closing the app), it starts over
+/// from Basics - before this, a new account could show the previous account's
+/// unlocked categories.
+void syncUnlockCache(String? userId) {
+  if (userId == _unlockedUser) return;
+  unlockedCategories
+    ..clear()
+    ..add('basic');
+  _unlockedUser = userId;
+}
 
 /// DB categories.id for each Learn category id (same order as the Learn grid).
 const kCategoryDbIds = <String, int>{
