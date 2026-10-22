@@ -1,23 +1,24 @@
 import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:flutter/material.dart';
 
+import '../../widgets/progress_card.dart';
+
 class ProfilePage extends StatefulWidget {
   const ProfilePage({super.key});
-  
+
   @override
   State<ProfilePage> createState() => _ProfilePageState();
 }
 
-
 class _ProfilePageState extends State<ProfilePage> {
   late Future<int> _streakFuture;
-  late Future<int> _lessonsFuture; 
+  late Future<int> _lessonsFuture;
 
   @override
   void initState() {
     super.initState();
     _streakFuture = _fetchStreak();
-    _lessonsFuture = _fetchLessonsCompleted(); 
+    _lessonsFuture = _fetchLessonsCompleted();
   }
 
   Future<int> _fetchStreak() async {
@@ -35,7 +36,9 @@ class _ProfilePageState extends State<ProfilePage> {
 
   Future<int> _fetchLessonsCompleted() async {
     try {
-      final response = await Supabase.instance.client.rpc('get_lessons_completed');
+      final response = await Supabase.instance.client.rpc(
+        'get_lessons_completed',
+      );
       if (response is List) {
         return response.isNotEmpty ? response.first as int : 0;
       }
@@ -49,14 +52,15 @@ class _ProfilePageState extends State<ProfilePage> {
   @override
   Widget build(BuildContext context) {
     final user = Supabase.instance.client.auth.currentUser;
-    final metadataName = (user?.userMetadata?['display_name'] as String?)?.trim();
+    final metadataName = (user?.userMetadata?['display_name'] as String?)
+        ?.trim();
     final String profileName = metadataName != null && metadataName.isNotEmpty
         ? metadataName
         : (user?.email?.split('@').first ?? '');
 
     return _buildSecondaryPage(
       icon: Icons.person_rounded,
-      title: 'Profile',   
+      title: 'Profile',
       child: Column(
         children: [
           CircleAvatar(
@@ -86,38 +90,9 @@ class _ProfilePageState extends State<ProfilePage> {
             style: const TextStyle(color: Color(0xFF6B8581)),
           ),
           const SizedBox(height: 30),
-          FutureBuilder<int>(
-              future: _streakFuture,
-              builder: (context, snapshot) {
-                String streakText = '...';
-                if (snapshot.connectionState == ConnectionState.done) {
-                  final streak = snapshot.data ?? 0;
-                  streakText = '$streak ${streak == 1 ? 'day' : 'days'}';
-                }
-                return _buildInfoTile(
-                  Icons.local_fire_department_outlined,
-                  'Current streak',
-                  streakText,
-                );
-              },
-            ),
-          FutureBuilder<int>(
-            future: _lessonsFuture, 
-            builder: (context, snapshot) {
-              String categoriesText = '...';
-              if (snapshot.connectionState == ConnectionState.done) {
-                final count = snapshot.data ?? 0;
-                categoriesText = '$count ${count == 1 ? 'category' : 'categories'}';
-              }
-              return _buildInfoTile(
-                Icons.school_outlined, 
-                'Categories completed', 
-                categoriesText,         
-              );
-            },
-          ),
+          ProgressCard(mastered: _lessonsFuture, streak: _streakFuture),
         ],
-      ),  
+      ),
     );
   }
 
@@ -147,34 +122,6 @@ class _ProfilePageState extends State<ProfilePage> {
           ),
           const SizedBox(height: 30),
           child,
-        ],
-      ),
-    );
-  }
-
-  Widget _buildInfoTile(IconData icon, String title, String value) {
-    return Container(
-      margin: const EdgeInsets.only(bottom: 12),
-      padding: const EdgeInsets.all(16),
-      decoration: BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.circular(16),
-        border: Border.all(color: const Color(0xFFE2EEEB)),
-      ),
-      child: Row(
-        children: [
-          Icon(icon, color: const Color(0xFF087F73)),
-          const SizedBox(width: 14),
-          Expanded(
-            child: Text(
-              title,
-              style: const TextStyle(
-                color: Color(0xFF153B39),
-                fontWeight: FontWeight.w600,
-              ),
-            ),
-          ),
-          Text(value, style: const TextStyle(color: Color(0xFF6B8581))),
         ],
       ),
     );

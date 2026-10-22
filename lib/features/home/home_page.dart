@@ -1,4 +1,6 @@
 import 'package:filosign/features/home/practice_screen.dart';
+import '../../widgets/progress_card.dart';
+import '../../learn/learn_routes.dart' show progressVersion;
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 
@@ -57,6 +59,7 @@ class _HomePageState extends State<HomePage> {
     super.initState();
     _streakFuture = _fetchStreak();
     _lessonsCompletedFuture = _fetchLessonsCompleted();
+    progressVersion.addListener(_reloadProgress);
     _currentLessonFuture = _fetchCurrentLesson();
     WidgetsBinding.instance.addPostFrameCallback((_) {
       Future.delayed(const Duration(milliseconds: 600), () {
@@ -65,7 +68,8 @@ class _HomePageState extends State<HomePage> {
           CoachStep(_tourSearch, 'Search any sign',
               'Type a word like "mother" or "hello" to find its lesson.'),
           CoachStep(_tourStreak, 'Your progress',
-              'Learn every day to grow your streak.'),
+              'Your level, how much of the course is done, and your daily streak. '
+                  'Pass a category quiz to level up.'),
           CoachStep(_tourLearn, 'Learn',
               'Watch the lesson videos by category, then sign each one with your camera. '
                   'Pass a category quiz with 70% to unlock the next.'),
@@ -159,8 +163,18 @@ class _HomePageState extends State<HomePage> {
     }
   }
   
+  /// A finished quiz changes the level: refresh the progress card.
+  void _reloadProgress() {
+    if (!mounted) return;
+    setState(() {
+      _streakFuture = _fetchStreak();
+      _lessonsCompletedFuture = _fetchLessonsCompleted();
+    });
+  }
+
   @override
   void dispose() {
+    progressVersion.removeListener(_reloadProgress);
     _searchController.dispose();
     super.dispose();
   }
@@ -173,7 +187,8 @@ class _HomePageState extends State<HomePage> {
     return Scaffold(
       backgroundColor: const Color(0xFFF6FBFA),
       body: SafeArea(
-        child: Center(
+        child: Align(
+          alignment: Alignment.topCenter,
           child: ConstrainedBox(
             constraints: const BoxConstraints(maxWidth: 1120),
             child: pages[_selectedIndex],
@@ -255,7 +270,10 @@ class _HomePageState extends State<HomePage> {
             ),
           ),
           const SizedBox(height: 22),
-          KeyedSubtree(key: _tourStreak, child: _buildStreakCard()),
+          KeyedSubtree(
+            key: _tourStreak,
+            child: ProgressCard(mastered: _lessonsCompletedFuture, streak: _streakFuture),
+          ),
           const SizedBox(height: 28),
           const Text(
             'Keep learning',
@@ -322,92 +340,6 @@ class _HomePageState extends State<HomePage> {
           ),
           const SizedBox(height: 13),
           _buildLessonPreview(),
-        ],
-      ),
-    );
-  }
-
-  Widget _buildStreakCard() {
-    return Container(
-      padding: const EdgeInsets.all(22),
-      decoration: BoxDecoration(
-        borderRadius: BorderRadius.circular(24),
-        gradient: const LinearGradient(
-          colors: [Color(0xFF087F73), Color(0xFF10A99A), Color(0xFFF18A3A)],
-          begin: Alignment.topLeft,
-          end: Alignment.bottomRight,
-        ),
-        boxShadow: const [
-          BoxShadow(
-            color: Color(0x26087F73),
-            blurRadius: 18,
-            offset: Offset(0, 9),
-          ),
-        ],
-      ),
-      child: Row(
-        children: [
-          Container(
-            width: 54,
-            height: 54,
-            decoration: BoxDecoration(
-              color: Colors.white.withValues(alpha: 0.2),
-              shape: BoxShape.circle,
-            ),
-            child: const Icon(
-              Icons.local_fire_department_rounded,
-              color: Colors.white,
-              size: 30,
-            ),
-          ),
-          const SizedBox(width: 16),
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  'Your learning streak',
-                  style: TextStyle(color: Colors.white70, fontSize: 13),
-                ),
-                 FutureBuilder<int>(
-                  future: _streakFuture,
-                  builder: (context, snapshot) {
-                    if (snapshot.connectionState == ConnectionState.waiting) {
-                      return const SizedBox(
-                        height: 30,
-                        child: Align(
-                          alignment: Alignment.centerLeft,
-                          child: SizedBox(
-                            width: 20,
-                            height: 20,
-                            child: CircularProgressIndicator(
-                              color: Colors.white,
-                              strokeWidth: 2,
-                            ),
-                          ),
-                        ),
-                      );
-                    }
-                    final streak = snapshot.data ?? 0;
-                    return Text(
-                      '$streak ${streak == 1 ? 'day' : 'days'}',
-                      style: const TextStyle(
-                        color: Colors.white,
-                        fontSize: 25,
-                        fontWeight: FontWeight.w800,
-                      ),
-                    );
-                  },
-                ),
-                
-                const SizedBox(height: 3),
-                const Text(
-                  'Keep it going today!',
-                  style: TextStyle(color: Colors.white, fontSize: 13),
-                ),
-              ],
-            ),
-          ),
         ],
       ),
     );
