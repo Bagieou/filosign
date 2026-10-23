@@ -402,7 +402,7 @@ class V4SignRecognizer implements SignRecognizer {
   /// Replayed (src/compare_sets_v4.py): hand moved chin <-> forehead,
   /// right answer 6% -> 56%; held-out with body 91.1% / 1.9% wrong, without
   /// body unchanged (90.9% / 1.7%); teammate captures 0/20 -> 3/20.
-  /// Numbers always use the dropout models: there the motion / full sequence
+  /// Numbers and months always use the dropout models: there the motion / full sequence
   /// matters, not location, and the location-aware set read "nine" (5 shape
   /// then a motion) as "five": on-device attempts 2/14 vs 14/14 (eight 2/5 vs
   /// 5/5); held-out numbers 90% vs 92%. Every other category is unchanged.
@@ -411,7 +411,12 @@ class V4SignRecognizer implements SignRecognizer {
     if (input == null) return null;
     final withBody = window.where((f) => f.poseOk).length >= 0.5 * window.length;
     final numbers = _candidates.contains('nine') && _candidates.contains('five');
-    final body = _bodyIso.length == 3 && withBody && !numbers;
+    // Months too: they differ by handshape / motion near the face, not by
+    // forehead-vs-chin; held-out months with the regular models 75.2%
+    // correct / 1.0% wrong vs 74.3% / 5.0% (april 5/9 vs 4/9, august 7/8 vs
+    // 6/8, no april<->august wrong locks) - src/months_check_v4.py.
+    final months = _candidates.contains('april') && _candidates.contains('august');
+    final body = _bodyIso.length == 3 && withBody && !numbers && !months;
     _lastSet = body ? 'body' : 'dropout';
     return _run(input, const [0, 1, 2], body: body);
   }
