@@ -2,7 +2,9 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:filosign/learn/category_detail_screen.dart';
+import 'package:filosign/learn/learn_repository.dart';
 import 'package:filosign/learn/learn_routes.dart';
+import 'package:filosign/learn/lesson_progress.dart';
 import 'package:filosign/test_build.dart';
 
 class LearnScreen extends StatefulWidget {
@@ -33,6 +35,15 @@ class _LearnScreenState extends State<LearnScreen> {
 
   String? _justUnlocked;
 
+  /// Completed lessons per category (sign check passed, from
+  /// lesson_progress). On an older backend without lesson_progress this
+  /// falls back to an estimate: quiz taken = all lessons, and the category
+  /// of the current video is done up to that video.
+  Map<String, int> _done = {};
+
+  /// Categories whose quiz was passed (server decides).
+  Set<String> _quizPassed = {};
+
   final Map<String, GlobalKey> _tileKeys = {
     for (final c in _categories) c.id: GlobalKey(),
   };
@@ -47,12 +58,84 @@ class _LearnScreenState extends State<LearnScreen> {
         for (final c in _categories) c.id: true,
     };
     _load();
+    _loadProgress();
+    progressVersion.addListener(_loadProgress);
+  }
+
+  @override
+  void dispose() {
+    progressVersion.removeListener(_loadProgress);
+    super.dispose();
   }
 
   Future<void> _load() async {
     final map = await _fetchAll();
     if (!mounted) return;
     setState(() => _access = map);
+  }
+
+  Future<void> _loadProgress() async {
+    if (Supabase.instance.client.auth.currentUser == null) return;
+    final done = <String, int>{};
+    final passed = <String>{};
+    try {
+      final client = Supabase.instance.client;
+      final lessonsLoaded = LessonProgress.instance.refresh();
+      final results = await Future.wait<dynamic>([
+        client.rpc('get_practice_categories'),
+        client.rpc('get_current_lesson'),
+      ]);
+      await lessonsLoaded;
+      final quizTaken = <int>{};
+      if (results[0] is List) {
+        for (final r in results[0] as List) {
+          if (r is Map && r['category_id'] is num) {
+            final id = (r['category_id'] as num).toInt();
+            quizTaken.add(id);
+            if (r['passed'] == true) {
+              passed.addAll(kCategoryDbIds.entries.where((e) => e.value == id).map((e) => e.key));
+            }
+          }
+        }
+      }
+      if (LessonProgress.instance.enforced) {
+        for (final c in _categories) {
+          final lessons = (await LearnRepository.instance.getCategory(c.id)).sortedLessons;
+          done[c.id] = LessonProgress.instance.completedCount(lessons);
+        }
+        if (!mounted) return;
+        setState(() {
+          _done = done;
+          _quizPassed = passed;
+        });
+        return;
+      }
+      for (final c in _categories) {
+        if (quizTaken.contains(kCategoryDbIds[c.id])) done[c.id] = c.totalSigns;
+      }
+      final current = results[1];
+      final videoId = current is Map ? (current['video_id'] as num?)?.toInt() : null;
+      if (videoId != null) {
+        for (final c in _categories) {
+          if (done.containsKey(c.id)) continue;
+          final lessons = (await LearnRepository.instance.getCategory(c.id)).sortedLessons;
+          final i = lessons.indexWhere(
+              (l) => l.videoAsset?.split('/').last.split('.').first == '$videoId');
+          if (i != -1) {
+            done[c.id] = (i + 1).clamp(0, c.totalSigns);
+            break;
+          }
+        }
+      }
+    } catch (e) {
+      debugPrint('learn progress load failed: $e');
+      return; // keep the bars we already have
+    }
+    if (!mounted) return;
+    setState(() {
+      _done = done;
+      _quizPassed = {for (final c in _categories) if ((done[c.id] ?? 0) >= c.totalSigns) c.id};
+    });
   }
 
   Future<Map<String, bool>> _fetchAll() async {
@@ -150,6 +233,7 @@ class _LearnScreenState extends State<LearnScreen> {
     final after = await _fetchAll();
     if (!mounted) return;
     setState(() => _access = after);
+    _loadProgress(); // lessons watched in the category just closed
   }
 
   _LearnCategory? _nextCategory(String id) {
@@ -204,6 +288,8 @@ class _LearnScreenState extends State<LearnScreen> {
                       child: _CategoryTile(
                         category: c,
                         canAccess: open,
+                        done: _done[c.id] ?? 0,
+                        quizPassed: _quizPassed.contains(c.id),
                         highlight: _justUnlocked == c.id,
                         onTap: open
                             ? () => _openCategory(c)
@@ -243,12 +329,20 @@ class _CategoryTile extends StatelessWidget {
     required this.category,
     required this.canAccess,
     required this.onTap,
+    this.done = 0,
+    this.quizPassed = false,
     this.highlight = false,
   });
   final _LearnCategory category;
   final bool canAccess;
+  final int done;
+  final bool quizPassed;
   final bool highlight;
   final VoidCallback onTap;
+
+  bool get complete => canAccess && done >= category.totalSigns && quizPassed;
+
+  bool get quizNext => canAccess && done >= category.totalSigns && !quizPassed;
 
   @override
   Widget build(BuildContext context) {
@@ -306,24 +400,53 @@ class _CategoryTile extends StatelessWidget {
                   child: Icon(
                     canAccess ? category.icon : Icons.lock_outline_rounded,
                     key: ValueKey(canAccess),
-                    size: 36,
+                    size: 32,
                     color: canAccess ? const Color(0xFF087F73) : Colors.grey,
                   ),
                 ),
-                const SizedBox(height: 10),
-                Text(
-                  category.title,
-                  textAlign: TextAlign.center,
-                  style: TextStyle(
-                    color: canAccess ? const Color(0xFF153B39) : Colors.grey,
-                    fontSize: 16,
-                    fontWeight: FontWeight.w700,
+                const SizedBox(height: 8),
+                FittedBox(
+                  fit: BoxFit.scaleDown,
+                  child: Text(
+                    category.title,
+                    textAlign: TextAlign.center,
+                    style: TextStyle(
+                      color: canAccess ? const Color(0xFF153B39) : Colors.grey,
+                      fontSize: 16,
+                      fontWeight: FontWeight.w700,
+                    ),
                   ),
                 ),
-                const SizedBox(height: 4),
-                Text(
-                  '${category.totalSigns} signs',
-                  style: TextStyle(color: Colors.grey.shade600, fontSize: 12),
+                if (canAccess) ...[
+                  const SizedBox(height: 10),
+                  ClipRRect(
+                    borderRadius: BorderRadius.circular(4),
+                    child: LinearProgressIndicator(
+                      value: done / category.totalSigns,
+                      minHeight: 6,
+                      backgroundColor: const Color(0xFFE2EEEB),
+                      color: complete ? const Color(0xFF2E9E5B) : const Color(0xFF087F73),
+                    ),
+                  ),
+                  const SizedBox(height: 6),
+                ] else
+                  const SizedBox(height: 4),
+                FittedBox(
+                  fit: BoxFit.scaleDown,
+                  child: Text(
+                    !canAccess || done == 0
+                        ? '${category.totalSigns} signs'
+                        : complete
+                            ? 'Completed'
+                            : quizNext
+                                ? 'Quiz not passed yet'
+                                : '$done of ${category.totalSigns} learned',
+                    style: TextStyle(
+                      color: complete ? const Color(0xFF2E9E5B) : Colors.grey.shade600,
+                      fontSize: 12,
+                      fontWeight: complete ? FontWeight.w700 : FontWeight.normal,
+                    ),
+                  ),
                 ),
               ],
             ),

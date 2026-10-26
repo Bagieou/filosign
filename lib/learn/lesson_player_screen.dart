@@ -8,6 +8,7 @@ import 'package:filosign/learn/lesson.dart';
 import 'package:filosign/learn/live_sign_lesson_screen.dart';
 import 'package:filosign/features/quiz/quiz_screen.dart';
 import 'package:filosign/learn/learn_routes.dart';
+import 'package:filosign/learn/lesson_progress.dart';
 
 class LessonPlayerScreen extends StatefulWidget {
   final List<Lesson> lessons;
@@ -32,12 +33,39 @@ class _LessonPlayerScreenState extends State<LessonPlayerScreen> {
   bool _showControls = true;
   Timer? _hideControlsTimer;
   bool _hasSavedCurrentLesson = false;
+  final _progress = LessonProgress.instance;
+
+  /// Furthest point reached by normal playback. Until the video has been
+  /// watched to the end, seeking past it is not allowed.
+  Duration _maxWatched = Duration.zero;
+  bool _videoDone = false;
+
+  bool get _mustWatch => _progress.enforced && !_videoDone;
 
   @override
   void initState() {
     super.initState();
     _currentIndex = widget.initialIndex;
-    _initController(widget.lessons[_currentIndex]);
+    _start();
+  }
+
+  Future<void> _start() async {
+    await _progress.refresh();
+    if (!mounted) return;
+    final i = _progress.openIndex(widget.lessons, widget.initialIndex);
+    if (i != widget.initialIndex) {
+      _currentIndex = i;
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (!mounted) return;
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+          content: Text('Lessons open in order. Continue with '
+              '"${widget.lessons[i].title}".'),
+          behavior: SnackBarBehavior.floating,
+          backgroundColor: const Color(0xFF087F73),
+        ));
+      });
+    }
+    await _initController(widget.lessons[_currentIndex]);
   }
 
   Future<void> _initController(Lesson lesson) async {
@@ -46,6 +74,8 @@ class _LessonPlayerScreenState extends State<LessonPlayerScreen> {
     await _controller?.dispose();
     _controller = null;
     _hasSavedCurrentLesson = false;
+    _maxWatched = Duration.zero;
+    _videoDone = _progress.watched(lesson);
 
     if (lesson.videoAsset == null || lesson.videoAsset!.isEmpty) {
       if (mounted) setState(() => _initialized = false);
@@ -68,10 +98,20 @@ class _LessonPlayerScreenState extends State<LessonPlayerScreen> {
 
   void _onVideoUpdate() {
     if (_controller == null) return;
+    final pos = _controller!.value.position;
 
-    final isFinished = _controller!.value.position >=
-            _controller!.value.duration &&
+    if (_mustWatch) {
+      if (pos > _maxWatched + const Duration(seconds: 2)) {
+        _controller!.seekTo(_maxWatched); // no jumping ahead on a new lesson
+        return;
+      }
+      if (pos > _maxWatched) _maxWatched = pos;
+    }
+
+    final isFinished = pos >= _controller!.value.duration &&
         _controller!.value.duration > Duration.zero;
+
+    if (isFinished && !_videoDone) setState(() => _videoDone = true);
 
     if (isFinished && !_hasSavedCurrentLesson) {
       _hasSavedCurrentLesson = true;
@@ -139,7 +179,21 @@ class _LessonPlayerScreenState extends State<LessonPlayerScreen> {
     });
   }
 
+  void _hint(String text) {
+    ScaffoldMessenger.of(context)
+      ..hideCurrentSnackBar()
+      ..showSnackBar(SnackBar(
+        content: Text(text),
+        behavior: SnackBarBehavior.floating,
+        backgroundColor: const Color(0xFF087F73),
+      ));
+  }
+
   Future<void> _goNext() async {
+    if (_mustWatch) {
+      _hint('Watch the whole video first, then tap Next.');
+      return;
+    }
     _controller?.pause();
     final lesson = widget.lessons[_currentIndex];
 
@@ -160,6 +214,10 @@ class _LessonPlayerScreenState extends State<LessonPlayerScreen> {
       _controller?.play();
       return;
     }
+    // Passed = lesson completed; skipped = watched only (the next lesson
+    // opens, but the quiz waits until this sign is passed).
+    await _progress.record(lesson, signPassed: result?['success'] == true);
+    if (!mounted) return;
 
     // More lessons left in this category: advance to the next one.
     if (_currentIndex + 1 < widget.lessons.length) {
@@ -168,8 +226,30 @@ class _LessonPlayerScreenState extends State<LessonPlayerScreen> {
       return;
     }
 
-    // Last lesson of the category: run the 10-question quiz, then carry its
-    // QuizResult all the way up so LearnScreen can unlock the next tile.
+    // Last lesson of the category: the quiz needs every sign passed first.
+    final missing = _progress.missing(widget.lessons);
+    if (missing.isNotEmpty) {
+      await showDialog<void>(
+        context: context,
+        builder: (ctx) => AlertDialog(
+          title: const Text('Almost there'),
+          content: Text('Pass these signs first to take the '
+              '${widget.category.title} quiz:\n\n'
+              '${missing.map((l) => '• ${l.title}').join('\n')}'),
+          actions: [
+            FilledButton(
+              onPressed: () => Navigator.pop(ctx),
+              child: const Text('OK'),
+            ),
+          ],
+        ),
+      );
+      if (mounted) Navigator.pop(context);
+      return;
+    }
+
+    // Run the 10-question quiz, then carry its QuizResult all the way up so
+    // LearnScreen can unlock the next tile.
     final quizResult = await Navigator.push<QuizResult>(
       context,
       MaterialPageRoute<QuizResult>(
@@ -401,7 +481,8 @@ class _LessonPlayerScreenState extends State<LessonPlayerScreen> {
   }
 
   void _seekForward() {
-    final newPosition = _controller!.value.position + const Duration(seconds: 3);
+    var newPosition = _controller!.value.position + const Duration(seconds: 3);
+    if (_mustWatch && newPosition > _maxWatched) newPosition = _maxWatched;
     if (newPosition < _controller!.value.duration) {
       _controller!.seekTo(newPosition);
     }
