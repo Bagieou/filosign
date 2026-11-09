@@ -75,7 +75,6 @@ class _QuizScreenState extends State<QuizScreen> {
     }
     // half live-camera, half video questions (video only where live sign
     // checking isn't available, i.e. iOS)
-    // half camera, half multiple choice
     final types = [for (var i = 0; i < n; i++) kLiveSignSupported && i < n ~/ 2]
       ..shuffle(_rng);
     return [

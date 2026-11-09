@@ -234,8 +234,8 @@ class FeedbackBanner extends StatelessWidget {
 
   static const _stepBack = 'Tip: step back so your face and shoulders show';
 
-  @override
   // feedback card on camera screen
+  @override
   Widget build(BuildContext context) {
     final pct = (confidence * 100).round();
     final Color color;
