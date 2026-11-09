@@ -65,6 +65,7 @@ class _QuizScreenState extends State<QuizScreen> {
       .where((l) => l.videoAsset != null && l.videoAsset!.isNotEmpty)
       .toList();
 
+  // quiz questions
   List<_Question> _buildQuestions() {
     final pool = _lessons;
     final n = widget.questionCount;
@@ -74,6 +75,7 @@ class _QuizScreenState extends State<QuizScreen> {
     }
     // half live-camera, half video questions (video only where live sign
     // checking isn't available, i.e. iOS)
+    // half camera, half multiple choice
     final types = [for (var i = 0; i < n; i++) kLiveSignSupported && i < n ~/ 2]
       ..shuffle(_rng);
     return [
@@ -153,6 +155,7 @@ class _QuizScreenState extends State<QuizScreen> {
 
   /// Saves the score first; the celebration only starts once it is stored, so
   /// the unlock never depends on the 5-second overlay finishing.
+  // submit score - server decides pass/fail + unlock
   Future<void> _submitScore() async {
     final user = Supabase.instance.client.auth.currentUser;
     if (user == null) {
@@ -183,6 +186,7 @@ class _QuizScreenState extends State<QuizScreen> {
       final map = res is Map
           ? Map<String, dynamic>.from(res)
           : const <String, dynamic>{};
+      // pass/fail from server (70%)
       final passed = map['passed'] == true;
       setState(() {
         _saving = false;

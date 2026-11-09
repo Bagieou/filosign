@@ -24,11 +24,13 @@ class _SearchResultsScreenState extends State<SearchResultsScreen> {
     _future = _loadResults(widget.query);
   }
 
+  // search signs by name
   Future<List<_SearchResult>> _loadResults(String query) async {
     final repo = LearnRepository.instance;
     final categoryIds = LearnRepository.allCategoryIds;
     final lower = query.toLowerCase();
 
+    // check which categories are unlocked
     final accessList = await Future.wait([
       for (final id in categoryIds) _fetchAccess(id),
     ]);
@@ -43,11 +45,13 @@ class _SearchResultsScreenState extends State<SearchResultsScreen> {
       final canAccess = accessById[id] ?? false;
       for (int i = 0; i < cat.sortedLessons.length; i++) {
         final lesson = cat.sortedLessons[i];
+        // match search text
         if (lesson.title.toLowerCase().contains(lower)) {
           results.add(_SearchResult(
             category: cat,
             lesson: lesson,
             lessonIndex: i,
+            // locked / unlocked
             canAccess: canAccess,
           ));
         }

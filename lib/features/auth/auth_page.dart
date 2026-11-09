@@ -129,23 +129,25 @@ class _AuthPageState extends State<AuthPage> {
   }
 
 // Execute sign up
+  // sign up - create account then send OTP to email
   Future<void> _signUp() async {
     final email = _emailController.text.trim();
     final password = _passwordController.text.trim();
     final name = _nameController.text.trim();
 
+    // required fields
     if (email.isEmpty || password.isEmpty) {
       _showError('Please enter email and password');
       return;
     }
 
-    // REQ034: CAPTCHA before the account is created
     final human = await showCaptchaDialog(context);
     if (!human || !mounted) return;
 
     setState(() => _isLoading = true);
 
     try {
+      // create account in supabase auth
       final AuthResponse response = await Supabase.instance.client.auth.signUp(
         email: email,
         password: password,
@@ -166,6 +168,7 @@ class _AuthPageState extends State<AuthPage> {
         const SnackBar(content: Text('A verification code has been sent to your email.')),
       );
 
+      // go to OTP screen
       Navigator.push(
         context,
         MaterialPageRoute(
@@ -193,7 +196,9 @@ class _AuthPageState extends State<AuthPage> {
   }
 
 //Password sign in
+  // sign in with email + password
   Future<void> _signInWithPassword() async {
+    // lockout: 5 failed attempts = 15 mins
     _checkLockout();
     if (_isLockedOut) {
       _showError('Account locked out. Try again in 15 minutes.');

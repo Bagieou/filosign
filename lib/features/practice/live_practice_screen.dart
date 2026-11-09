@@ -235,10 +235,12 @@ class FeedbackBanner extends StatelessWidget {
   static const _stepBack = 'Tip: step back so your face and shoulders show';
 
   @override
+  // feedback card on camera screen
   Widget build(BuildContext context) {
     final pct = (confidence * 100).round();
     final Color color;
     final String title, subtitle;
+    // failed checks -> Not recognized
     if (notRecognized && !locked) {
       color = Colors.blueGrey.shade600;
       title = 'Not recognized';
@@ -251,6 +253,7 @@ class FeedbackBanner extends StatelessWidget {
       color = const Color(0xFF153B39);
       title = 'Waiting…';
       subtitle = 'Start signing';
+    // passed -> green card
     } else if (locked) {
       color = Colors.green.shade600;
       title = '✓  $sign';

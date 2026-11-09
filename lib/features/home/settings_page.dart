@@ -576,6 +576,7 @@
       }
     }
 
+    // delete account (confirm + OTP)
     Future<void> _deleteAccount() async {
       final user = Supabase.instance.client.auth.currentUser;
       if (user == null) return;
@@ -634,6 +635,7 @@
       final user = Supabase.instance.client.auth.currentUser;
       if (user == null) return;
       try {
+        // server deletes account and progress
         final res = await Supabase.instance.client.functions.invoke('delete-account');
         if (res.status != 200) throw Exception(res.data);
         

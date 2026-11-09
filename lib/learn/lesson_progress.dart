@@ -65,6 +65,8 @@ class LessonProgress {
 
   /// Lessons open in order: the first one, any already watched, and the one
   /// right after the last watched lesson.
+  // lessons unlock in order
+  // open only if previous lesson was watched
   bool isOpen(List<Lesson> lessons, int i) =>
       !enforced || i == 0 || watched(lessons[i]) || watched(lessons[i - 1]);
 
@@ -76,9 +78,11 @@ class LessonProgress {
   }
 
   /// Lessons whose sign was not passed yet (the quiz waits for these).
+  // lessons not done yet (quiz stays locked)
   List<Lesson> missing(List<Lesson> lessons) =>
       enforced ? lessons.where((l) => !completed(l)).toList() : const [];
 
+  // save lesson + sign result to server
   Future<void> record(Lesson l, {required bool signPassed}) async {
     final id = videoId(l);
     if (id == null) return;

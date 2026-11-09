@@ -82,8 +82,10 @@ class _HomePageState extends State<HomePage> {
     });
   }
 
+   // homepage stats (streak + lessons completed)
    Future<int> _fetchStreak() async {
     try {
+      // get streak from server
       final response = await Supabase.instance.client.rpc('get_streak');
       // Supabase RPC returns a List for set-returning functions, or a scalar.
       if (response is List) {
@@ -96,6 +98,7 @@ class _HomePageState extends State<HomePage> {
     }
   }
 
+  // get number of completed lessons
   Future<int> _fetchLessonsCompleted() async {
     try {
       final response =

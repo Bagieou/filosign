@@ -69,6 +69,8 @@ class V4SignRecognizer implements SignRecognizer {
   static const int _minWindowFrames = 12;
   static const int _stableLockCount = 3;
   static const int _voteWindow = 5;
+  // confidence thresholds
+  // letters 85%
   static const double _stableLockMinConf = 0.85;
   /// Word signs are judged ONCE, on the whole attempt, when the hands drop
   /// (or after [_maxAttemptS] with the hands still up) - never mid-sign.
@@ -76,6 +78,7 @@ class V4SignRecognizer implements SignRecognizer {
   /// live lock 89.2% correct / 3.4% wrong (on-device 44%); whole attempt at
   /// 70%: 91.5% / 0.8% (on-device 50%). Letters keep the live lock (91%).
   bool get _endOnly => !letters;
+  // words, hands lowered 70%
   static const double _endLockWords = 0.70;
   static const double _maxAttemptS = 4.5;
   /// "Sign, then hold still" also ends a word sign: people taught by the old
@@ -87,11 +90,13 @@ class V4SignRecognizer implements SignRecognizer {
   /// "5" handshape on the way to "9") was judged as a finished sign.
   /// Replayed (src/hold_sim_v4.py, HOLD_S): 0.5 s 91.3% correct / 1.7% wrong,
   /// 1.0 s 91.5% / 0.8% = same as judging only when the hands drop.
+  // words, hold still 85%
   static const double _holdLock = 0.85;
   final HoldDetector _hold = HoldDetector();
   static const double _minMargin = 0.25;
   /// Minimum probability the best sign must have among ALL signs (before the
   /// category filter). Random movements spread probability thin.
+  // min raw score
   static const double _minRawConf = 0.2;
   /// Reject ("not a sign") class name in the label files.
   static const String noneLabel = '__none__';
@@ -470,12 +475,15 @@ class V4SignRecognizer implements SignRecognizer {
       if (out == null || _locked || !_ready || attempt != _attempt) return;
       final (probs, perModel) = out;
       final noneIdx = _labels.indexOf(noneLabel);
+      // compare only signs in current category
       final allowed = _allowed(candidates, noneIdx);
       final sum = allowed.fold<double>(0.0, (a, i) => a + probs[i]);
       if (sum <= 0) return;
       final j = _judge(probs, perModel, allowed, noneIdx);
       final idx = j.sign;
+      // confidence within category
       final conf = probs[idx] / sum;
+      // final check
       final ok = j.ok && conf >= (lock ?? (_endOnly ? _endLockWords : _stableLockMinConf));
       if (_log) {
         final line = 'FILOSIGN_FINAL ${_labels[idx]} ${(conf * 100).round()}% '
@@ -515,7 +523,9 @@ class V4SignRecognizer implements SignRecognizer {
     int best(List<double> p) => signs.reduce((a, b) => p[b] > p[a] ? b : a);
     final idx = best(probs);
     final picks = [for (final p in perModel) best(p)];
+    // not-a-sign score
     final noneP = noneIdx >= 0 ? probs[noneIdx] : 0.0;
+    // not-a-sign must be lower + 2 of 3 models agree
     final ok = noneP < probs[idx] &&
         probs[idx] >= _minRawConf &&
         picks.where((i) => i == idx).length >= math.min(2, picks.length);
