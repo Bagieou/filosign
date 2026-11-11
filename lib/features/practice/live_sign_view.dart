@@ -371,7 +371,8 @@ class _LiveSignViewState extends State<LiveSignView> with WidgetsBindingObserver
         latencyMs: _recognizer.lastLatencyMs,
         present: _recognizer.lastPresent,
         notRecognized: _recognizer.notRecognized,
-        bodyVisible: _recognizer.lastPoseOk && _framingOk,
+        // iOS has no body tracking, so don't ask the user to step back
+        bodyVisible: Platform.isIOS || (_recognizer.lastPoseOk && _framingOk),
         perf: _perf.text,
       ));
     });
@@ -513,7 +514,12 @@ class _LiveSignViewState extends State<LiveSignView> with WidgetsBindingObserver
         }
         // Pose frames are copied over the platform channel; 5 per second keeps
         // the UI thread responsive (the recognizer reuses the latest pose).
-        if (!widget.letters && now - _lastPoseMs >= (_handRate < 12 ? 350 : 200)) {
+        // iOS: no body tracking. The iOS pose plugin isn't MediaPipe Tasks (it
+        // stretches the frame and returns 0,0 for unsure points), so face and
+        // shoulder positions were wrong and location signs like "deaf" failed.
+        // Without a pose the word signs use the models trained to work without
+        // the body (held-out: 430/473 vs 433/473 with the body on Android).
+        if (!widget.letters && !Platform.isIOS && now - _lastPoseMs >= (_handRate < 12 ? 350 : 200)) {
           _lastPoseMs = now;
           _feedPose(image, orientation);
         }
