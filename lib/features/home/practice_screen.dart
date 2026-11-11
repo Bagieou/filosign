@@ -93,12 +93,27 @@ class _PracticeScreenState extends State<PracticeScreen> {
               SliverToBoxAdapter(
                 child: Padding(
                   padding: const EdgeInsets.fromLTRB(22, 22, 22, 12),
-                  child: Text(
-                    'Practice',
-                    style: Theme.of(context).textTheme.headlineMedium?.copyWith(
-                          color: _ink,
-                          fontWeight: FontWeight.w800,
+                  child: Row(
+                    children: [
+                      IconButton(
+                        tooltip: 'Back',
+                        icon: const Icon(Icons.arrow_back_rounded, color: _ink),
+                        onPressed: () => Navigator.pop(context),
+                      ),
+                      const SizedBox(width: 8),
+                      Expanded(
+                        child: Text(
+                          'Practice',
+                          style: Theme.of(context)
+                              .textTheme
+                              .headlineMedium
+                              ?.copyWith(
+                                color: _ink,
+                                fontWeight: FontWeight.w800,
+                              ),
                         ),
+                      ),
+                    ],
                   ),
                 ),
               ),

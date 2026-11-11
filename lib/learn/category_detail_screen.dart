@@ -14,8 +14,8 @@ class CategoryDetailScreen extends StatefulWidget {
 }
 
 class _CategoryDetailScreenState extends State<CategoryDetailScreen> {
-  late final Future<LearnCategory> _future =
-      LearnRepository.instance.getCategory(widget.categoryId);
+  late final Future<LearnCategory> _future = LearnRepository.instance
+      .getCategory(widget.categoryId);
   final _progress = LessonProgress.instance;
 
   @override
@@ -48,17 +48,28 @@ class _CategoryDetailScreenState extends State<CategoryDetailScreen> {
   void _lockedHint() {
     ScaffoldMessenger.of(context)
       ..hideCurrentSnackBar()
-      ..showSnackBar(const SnackBar(
-        content: Text('Finish the lessons above first, in order.'),
-        behavior: SnackBarBehavior.floating,
-        backgroundColor: Color(0xFF087F73),
-      ));
+      ..showSnackBar(
+        const SnackBar(
+          content: Text('Finish the lessons above first, in order.'),
+          behavior: SnackBarBehavior.floating,
+          backgroundColor: Color(0xFF087F73),
+        ),
+      );
   }
 
   @override
   Widget build(BuildContext context) {
     return Scaffold(
       backgroundColor: Colors.white,
+      appBar: AppBar(
+        backgroundColor: Colors.white,
+        elevation: 0,
+        leading: IconButton(
+          tooltip: 'Back',
+          icon: const Icon(Icons.arrow_back_rounded, color: Color(0xFF153B39)),
+          onPressed: () => Navigator.pop(context),
+        ),
+      ),
       body: FutureBuilder<LearnCategory>(
         future: _future,
         builder: (context, snap) {
@@ -101,10 +112,15 @@ class _CategoryDetailScreenState extends State<CategoryDetailScreen> {
                     final lesson = lessons[index];
                     final open = _progress.isOpen(lessons, index);
                     final done = _progress.completed(lesson);
-                    final retry = _progress.enforced && _progress.watched(lesson) && !done;
+                    final retry =
+                        _progress.enforced &&
+                        _progress.watched(lesson) &&
+                        !done;
                     return ListTile(
                       contentPadding: const EdgeInsets.symmetric(
-                          vertical: 8, horizontal: 0),
+                        vertical: 8,
+                        horizontal: 0,
+                      ),
                       title: Text(
                         lesson.title,
                         style: TextStyle(
@@ -114,8 +130,13 @@ class _CategoryDetailScreenState extends State<CategoryDetailScreen> {
                         ),
                       ),
                       subtitle: retry
-                          ? const Text('Sign not passed yet. Try it again.',
-                              style: TextStyle(color: Color(0xFFB26A00), fontSize: 12))
+                          ? const Text(
+                              'Sign not passed yet. Try it again.',
+                              style: TextStyle(
+                                color: Color(0xFFB26A00),
+                                fontSize: 12,
+                              ),
+                            )
                           : null,
                       trailing: !_progress.enforced
                           ? null
@@ -123,17 +144,17 @@ class _CategoryDetailScreenState extends State<CategoryDetailScreen> {
                               done
                                   ? Icons.check_circle_rounded
                                   : retry
-                                      ? Icons.error_outline_rounded
-                                      : open
-                                          ? Icons.play_circle_outline_rounded
-                                          : Icons.lock_outline_rounded,
+                                  ? Icons.error_outline_rounded
+                                  : open
+                                  ? Icons.play_circle_outline_rounded
+                                  : Icons.lock_outline_rounded,
                               color: done
                                   ? const Color(0xFF2E9E5B)
                                   : retry
-                                      ? const Color(0xFFB26A00)
-                                      : open
-                                          ? const Color(0xFF087F73)
-                                          : Colors.grey,
+                                  ? const Color(0xFFB26A00)
+                                  : open
+                                  ? const Color(0xFF087F73)
+                                  : Colors.grey,
                             ),
                       onTap: open ? () => _open(cat, index) : _lockedHint,
                     );

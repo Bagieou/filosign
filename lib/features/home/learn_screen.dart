@@ -267,12 +267,28 @@ class _LearnScreenState extends State<LearnScreen> {
             SliverToBoxAdapter(
               child: Padding(
                 padding: const EdgeInsets.fromLTRB(22, 22, 22, 12),
-                child: Text(
-                  'Start Learning',
-                  style: Theme.of(context).textTheme.headlineMedium?.copyWith(
-                        color: const Color(0xFF153B39),
-                        fontWeight: FontWeight.w800,
+                child: Row(
+                  children: [
+                    IconButton(
+                      tooltip: 'Back',
+                      icon: const Icon(
+                        Icons.arrow_back_rounded,
+                        color: Color(0xFF153B39),
                       ),
+                      onPressed: () => Navigator.pop(context),
+                    ),
+                    const SizedBox(width: 8),
+                    Expanded(
+                      child: Text(
+                        'Start Learning',
+                        style:
+                            Theme.of(context).textTheme.headlineMedium?.copyWith(
+                                  color: const Color(0xFF153B39),
+                                  fontWeight: FontWeight.w800,
+                                ),
+                      ),
+                    ),
+                  ],
                 ),
               ),
             ),
