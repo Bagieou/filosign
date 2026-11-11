@@ -513,7 +513,10 @@ class _LiveSignViewState extends State<LiveSignView> with WidgetsBindingObserver
         }
         // Pose frames are copied over the platform channel; 5 per second keeps
         // the UI thread responsive (the recognizer reuses the latest pose).
-        if (!widget.letters && now - _lastPoseMs >= (_handRate < 12 ? 350 : 200)) {
+        // iOS: pose every 400 ms so the hand tracker gets more of the CPU
+        // (the last pose is reused between updates).
+        if (!widget.letters &&
+            now - _lastPoseMs >= (Platform.isIOS ? 400 : (_handRate < 12 ? 350 : 200))) {
           _lastPoseMs = now;
           _feedPose(image, orientation);
         }

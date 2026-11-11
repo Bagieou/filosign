@@ -1,4 +1,5 @@
 import 'dart:convert';
+import 'dart:io' show Platform;
 import 'dart:isolate';
 import 'dart:math' as math;
 
@@ -59,6 +60,14 @@ class V4SignRecognizer implements SignRecognizer {
   }
   static const int _predictEveryN = 5;
   static const int _handsAwayMs = 700;
+  // iOS: the hand tracker returns fewer frames per second than on Android, so
+  // a short sign at the face (e.g. "deaf") often had < 12 hand frames and was
+  // dropped with no feedback. Replayed on held-out clips at 8 frames/s: 170 of
+  // 473 attempts were under 12 frames; judged from 6 frames they gave 156
+  // correct / 3 wrong / 9 not recognized (src: lowfps_check). Android unchanged.
+  static final bool _ios = Platform.isIOS;
+  static int get _awayMs => _ios ? 1000 : _handsAwayMs;
+  static int get _minFinalFrames => _ios ? 6 : _minWindowFrames;
   int? _awaySinceMs;
   bool _awayFired = false;
   static const int _bufferMaxMs = 5000;
@@ -248,15 +257,17 @@ class V4SignRecognizer implements SignRecognizer {
       // tracking dropout mid-sign lasted up to 0.47 s, almost the old 10 frames)
       final now = _clock.elapsedMilliseconds;
       _awaySinceMs ??= now;
-      if (!_awayFired && now - _awaySinceMs! >= _handsAwayMs) {
+      if (!_awayFired && now - _awaySinceMs! >= _awayMs) {
         _awayFired = true;
         // hands dropped: judge the whole attempt once, the way training saw
         // signs (live windows often hold only part of a sign)
-        if (_buffer.length >= _minWindowFrames) {
+        if (_buffer.length >= _minFinalFrames) {
           _finalDecision(List.of(_buffer), List.of(candidates), _attempt,
               List.of(_rawBuffer), List.of(_events));
         } else {
           _emitAttempt(_rawBuffer, _events, 'too_short');
+          // iOS: always answer an attempt the user made (no silent drop)
+          if (_ios && _buffer.length >= 3) notRecognized = true;
         }
         _clearAttempt();
       }
@@ -302,8 +313,9 @@ class V4SignRecognizer implements SignRecognizer {
 
     if (_endOnly && frame.t - _buffer.first.t >= _maxAttemptS) {
       // hands kept up: judge what was signed, then start a new attempt
+      // (iOS: show "Not recognized" on a miss even though the hands are up)
       _finalDecision(List.of(_buffer), List.of(candidates), _attempt,
-          List.of(_rawBuffer), List.of(_events));
+          List.of(_rawBuffer), List.of(_events), null, _ios);
       _clearAttempt();
       return _last;
     }
@@ -454,17 +466,18 @@ class V4SignRecognizer implements SignRecognizer {
   /// all 3 models and the same rule as a live lock ([_judge] + 85%).
   /// Simulated on held-out clips: words 40% -> 87% correct, wrong ~3%.
   Future<void> _finalDecision(List<CanonFrame> frames, List<String> candidates, int attempt,
-      [List<RawFrameV4> raw = const [], List<String> events = const [], double? lock]) async {
+      [List<RawFrameV4> raw = const [], List<String> events = const [], double? lock,
+      bool feedback = false]) async {
     var result = 'final_skipped';
     try {
-      await _finalDecisionRun(frames, candidates, attempt, events, (r) => result = r, lock);
+      await _finalDecisionRun(frames, candidates, attempt, events, (r) => result = r, lock, feedback);
     } finally {
       _emitAttempt(raw, events, result);
     }
   }
 
   Future<void> _finalDecisionRun(List<CanonFrame> frames, List<String> candidates, int attempt,
-      List<String> events, void Function(String) setResult, [double? lock]) async {
+      List<String> events, void Function(String) setResult, [double? lock, bool feedback = false]) async {
     while (_predicting) {
       await Future<void>.delayed(const Duration(milliseconds: 10));
     }
@@ -495,7 +508,7 @@ class V4SignRecognizer implements SignRecognizer {
       setResult(ok ? 'final_lock:${_labels[idx]}' : 'final_rejected:${_labels[idx]}');
       // A new attempt already started (hands back up, or kept up past
       // _maxAttemptS): a match still counts, a miss is not shown over it.
-      if (_buffer.isNotEmpty && !ok) return;
+      if (_buffer.isNotEmpty && !ok && !feedback) return;
       if (ok) {
         _locked = true;
         notRecognized = false;
