@@ -2,6 +2,7 @@ import 'dart:convert';
 import 'dart:io' show Platform;
 import 'dart:isolate';
 import 'dart:math' as math;
+import 'dart:typed_data' show Float32List;
 
 import 'package:flutter/foundation.dart' show debugPrint;
 import 'package:flutter/services.dart' show rootBundle;
@@ -424,6 +425,12 @@ class V4SignRecognizer implements SignRecognizer {
   /// then a motion) as "five": on-device attempts 2/14 vs 14/14 (eight 2/5 vs
   /// 5/5); held-out numbers 90% vs 92%. Every other category is unchanged.
   Future<(List<double>, List<List<double>>)?> _infer(List<CanonFrame> window) async {
+    // iOS: the body is still tracked and shown, but word signs are judged
+    // without it. The iOS pose plugin squeezes the whole frame into 256x256
+    // without finding the person first, so face points are off and signs made
+    // at the face (deaf, blind, deaf blind) failed. Test clips with no body:
+    // 430/473 correct (deaf 4/4, blind 3/4, deaf blind 3/4).
+    if (_ios && !letters) window = [for (final f in window) _withoutBody(f)];
     final input = await _input(window);
     if (input == null) return null;
     final withBody = window.where((f) => f.poseOk).length >= 0.5 * window.length;
@@ -437,6 +444,10 @@ class V4SignRecognizer implements SignRecognizer {
     _lastSet = body ? 'body' : 'dropout';
     return _run(input, const [0, 1, 2], body: body);
   }
+
+  /// Same frame with no face or shoulder points (as when the body is out of view).
+  static CanonFrame _withoutBody(CanonFrame f) => CanonFrame(
+      f.t, f.hands, f.present, Float32List(kPoseLm * 3), Float32List(kPoseLm), false);
 
   /// The 3-model check behind a live lock: same rule as the end of a sign.
   void _confirmLock(int cls, List<List<double>> perModel, List<String> candidates) {
