@@ -552,7 +552,8 @@ Future<void> _openPrivacy() async {
                 onPressed: () => setState(() => _obscurePassword = !_obscurePassword),
                 icon: Icon(_obscurePassword ? Icons.visibility_outlined : Icons.visibility_off_outlined),
               ),
-              validator: passwordValidationMessage,
+              validator: (value) =>
+                  _isSignUp ? passwordValidationMessage(value) : null,
               maxLength: 30,
             ),
             if (!_isSignUp) ...[
