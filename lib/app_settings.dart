@@ -92,6 +92,40 @@ class InactivityGuard extends StatefulWidget {
   /// Counts as activity (camera screens call this while hands are signing).
   static void activity() => _last = DateTime.now();
 
+  static const _lastKey = 'last_activity_ms';
+
+  /// Saves the time of the last activity on the phone, so the app can tell
+  /// how long the user was away after it was closed.
+  static Future<void> save() async {
+    try {
+      final p = await SharedPreferences.getInstance();
+      await p.setInt(_lastKey, _last.millisecondsSinceEpoch);
+    } catch (_) {}
+  }
+
+  /// At app start: keeps the saved login if the last activity was less than
+  /// 15 minutes ago (true), otherwise signs it out (false).
+  /// Returns null when no one was signed in.
+  static Future<bool?> resumeSavedLogin() async {
+    final auth = Supabase.instance.client.auth;
+    if (auth.currentSession == null) return null;
+    int? ms;
+    try {
+      ms = (await SharedPreferences.getInstance()).getInt(_lastKey);
+    } catch (_) {}
+    if (ms != null) {
+      final away = DateTime.now().difference(DateTime.fromMillisecondsSinceEpoch(ms));
+      if (!away.isNegative && away < timeout) {
+        activity();
+        return true;
+      }
+    }
+    try {
+      await auth.signOut();
+    } catch (_) {}
+    return false;
+  }
+
   @override
   State<InactivityGuard> createState() => _InactivityGuardState();
 }
@@ -104,7 +138,10 @@ class _InactivityGuardState extends State<InactivityGuard> with WidgetsBindingOb
     super.initState();
     WidgetsBinding.instance.addObserver(this);
     InactivityGuard.activity();
-    _timer = Timer.periodic(const Duration(seconds: 30), (_) => _check());
+    _timer = Timer.periodic(const Duration(seconds: 30), (_) {
+      _check();
+      InactivityGuard.save();
+    });
   }
 
   @override
@@ -116,7 +153,12 @@ class _InactivityGuardState extends State<InactivityGuard> with WidgetsBindingOb
 
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
-    if (state == AppLifecycleState.resumed) _check();
+    if (state == AppLifecycleState.resumed) {
+      _check();
+    } else {
+      // leaving the app: remember when the user was last active
+      InactivityGuard.save();
+    }
   }
 
   Future<void> _check() async {
