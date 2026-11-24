@@ -18,10 +18,19 @@ const _bg = Color(0xFFF6FBFA);
 /// Live sign check shown after a video lesson ("Sign: lesson just watched").
 /// Same layout and recognizer flow as the quiz's live camera challenge, but
 /// with no countdown and no scoring. Unlimited attempts; help escalates:
-///   - after [hintAfterWrong] wrong locks (or [hintAfterSeconds] with hands
-///     visible): "Watch again" button (reference video + posture tip)
-///   - after [skipAfterWrong] wrong locks (or [skipFallbackSeconds] on screen,
-///     e.g. camera/hand detection not working): "Skip"
+///   - after [hintAfterWrong] wrong tries: the "How to sign" pop-up opens by
+///     itself (once). Afterwards the "Watch again" button stays above the
+///     status banner so it can be reopened. (The button also appears after
+///     [hintAfterSeconds] with hands visible.)
+///   - after [skipAfterWrong] wrong tries (= hint + 2 more tries): "Skip"
+///     (or [skipFallbackSeconds] if a hand was NEVER detected, e.g. camera
+///     or hand detection not working)
+///
+/// A "wrong try" is either:
+///   - the recognizer locked onto a wrong sign, or
+///   - the user showed their hands for a moment and took them away without
+///     the target sign ever locking.
+/// Each try is counted once, so both help steps use the same counter.
 ///
 /// After every wrong lock, and after the hint dialog closes, the recognizer
 /// is reset through LiveSignView.resetToken (no camera rebuild), so a stuck
@@ -45,11 +54,19 @@ class LessonLiveSignScreen extends StatefulWidget {
 }
 
 class _LessonLiveSignScreenState extends State<LessonLiveSignScreen> {
-  static const int hintAfterWrong = 2;
-  static const int skipAfterWrong = 3;
+  static const int hintAfterWrong = 3;
+  static const int skipAfterWrong = hintAfterWrong + 2; // 2 more tries after hint
   static const int hintAfterSeconds = 20; // counted from the first hand seen
-  static const int skipFallbackSeconds = 45; // counted from screen open
+  static const int skipFallbackSeconds = 45; // only if no hand was ever seen
   static const Duration resetDelay = Duration(milliseconds: 1200);
+
+  // Pause before the auto pop-up so "Try again" is visible for a moment.
+  static const Duration hintPopupDelay = Duration(milliseconds: 700);
+
+  // A hand cycle only counts as a try if hands were visible at least this
+  // long, and then gone for at least [handsGoneDelay]. Filters out flicker.
+  static const Duration minTryHold = Duration(milliseconds: 600);
+  static const Duration handsGoneDelay = Duration(milliseconds: 800);
 
   late final Map<String, String> _titleByLabel = {
     for (final l in widget.category.lessons) modelLabelForLesson(l.id): l.title
@@ -59,9 +76,12 @@ class _LessonLiveSignScreenState extends State<LessonLiveSignScreen> {
   Timer? _hintTimer;
   Timer? _skipTimer;
   Timer? _resetTimer;
+  Timer? _goneTimer;
+  Timer? _popupTimer;
   bool _started = false; // a hand has been seen
   bool _hintByTime = false;
   bool _skipByTime = false;
+  bool _hintShown = false; // auto pop-up already opened once
   bool _done = false; // matched
   bool _paused = false; // hint dialog open: ignore recognizer updates
   LiveSignState? _state;
@@ -71,34 +91,25 @@ class _LessonLiveSignScreenState extends State<LessonLiveSignScreen> {
   // (lock + Top 3) without recreating the camera.
   int _session = 0;
 
-  int _wrongLocks = 0;
-  // REQ014: failed attempts in a row (a wrong sign or "Not recognized");
-  // at 3 the video of the correct sign opens by itself.
-  static const int autoVideoAfterFailures = 3;
-  int _failures = 0;
-  bool _lastNotRecognized = false;
+  // Wrong tries: wrong locks + hand cycles that ended without a match.
+  int _wrongTries = 0;
 
-  void _countFailure() {
-    _failures++;
-    if (_failures >= autoVideoAfterFailures && !_paused && !_done) {
-      _failures = 0;
-      WidgetsBinding.instance.addPostFrameCallback((_) {
-        if (mounted && !_done && !_paused) _showHint();
-      });
-    }
-  }
+  // Hand-cycle tracking (see _trackTries).
+  bool _handsVisible = false;
+  DateTime? _handsStart;
+  bool _tryCounted = false; // this hand cycle already counted as a try
 
-  bool get _hintAvailable => _wrongLocks >= hintAfterWrong || _hintByTime;
-  bool get _skipAvailable =>
-      !kLiveSignSupported || _wrongLocks >= skipAfterWrong || _skipByTime;
+  bool get _hintAvailable => _wrongTries >= hintAfterWrong || _hintByTime;
+  bool get _skipAvailable => _wrongTries >= skipAfterWrong || _skipByTime;
 
- @override
+  @override
   void initState() {
     super.initState();
+    // Safety net only: if no hand is ever detected, let the user skip.
     _skipTimer = Timer(const Duration(seconds: skipFallbackSeconds), () {
-      if (mounted && !_done) setState(() => _skipByTime = true);
+      if (mounted && !_done && !_started) setState(() => _skipByTime = true);
     });
-    Future.delayed(Duration.zero, () {
+    Future.delayed(const Duration(milliseconds: 500), () {
       if (mounted) setState(() => _mountView = true);
     });
   }
@@ -108,14 +119,16 @@ class _LessonLiveSignScreenState extends State<LessonLiveSignScreen> {
     _hintTimer?.cancel();
     _skipTimer?.cancel();
     _resetTimer?.cancel();
+    _goneTimer?.cancel();
+    _popupTimer?.cancel();
     super.dispose();
   }
 
-  
-
   String? _titleOf(String? label) => label == null
       ? null
-      : (label == V4SignRecognizer.noneLabel ? 'Not a sign' : (_titleByLabel[label] ?? label));
+      : (label == V4SignRecognizer.noneLabel
+          ? 'Not a sign'
+          : (_titleByLabel[label] ?? label));
 
   /// Fresh recognizer state: clears the lock and the Top 3.
   void _resetRecognizer() {
@@ -126,9 +139,65 @@ class _LessonLiveSignScreenState extends State<LessonLiveSignScreen> {
     });
   }
 
+  void _resetHandTracking() {
+    _goneTimer?.cancel();
+    _goneTimer = null;
+    _handsVisible = false;
+    _handsStart = null;
+    _tryCounted = false;
+  }
+
+  /// Adds one wrong try. When the count first reaches [hintAfterWrong], the
+  /// "How to sign" pop-up opens by itself (once). After that, the Watch again
+  /// button is how the user reopens it.
+  void _countTry() {
+    setState(() => _wrongTries++);
+    if (!_hintShown && _wrongTries >= hintAfterWrong) {
+      _hintShown = true;
+      _popupTimer?.cancel();
+      _popupTimer = Timer(hintPopupDelay, () {
+        if (mounted && !_done && !_paused) _showHint();
+      });
+    }
+  }
+
+  /// Counts a try when hands appear for a moment and then leave without the
+  /// target sign locking. Tries that already counted as a wrong lock are not
+  /// counted again.
+  void _trackTries(LiveSignState s) {
+    if (s.handCount > 0) {
+      _goneTimer?.cancel();
+      _goneTimer = null;
+      if (!_handsVisible) {
+        _handsVisible = true;
+        _handsStart = DateTime.now();
+        _tryCounted = false;
+      }
+      return;
+    }
+
+    // No hands right now. Wait a moment to be sure they really left.
+    if (_handsVisible && _goneTimer == null) {
+      _goneTimer = Timer(handsGoneDelay, () {
+        _goneTimer = null;
+        if (!mounted || _done || _paused) return;
+        final held = _handsStart == null
+            ? Duration.zero
+            : DateTime.now().difference(_handsStart!) - handsGoneDelay;
+        final counts = !_tryCounted && held >= minTryHold;
+        _handsVisible = false;
+        _handsStart = null;
+        _tryCounted = false;
+        if (counts) _countTry();
+      });
+    }
+  }
+
   void _onUpdate(LiveSignState s) {
     if (_done || _paused) return;
     final sign = s.prediction.sign;
+
+    _trackTries(s);
 
     // Correct sign.
     if (s.locked && sign == _target) {
@@ -139,10 +208,12 @@ class _LessonLiveSignScreenState extends State<LessonLiveSignScreen> {
       _hintTimer?.cancel();
       _skipTimer?.cancel();
       _resetTimer?.cancel();
+      _goneTimer?.cancel();
+      _popupTimer?.cancel();
       // Let the green "Correct!" bar show briefly, then return to the player.
       Future.delayed(const Duration(milliseconds: 900), () {
         if (mounted) {
-          Navigator.pop(context, {'success': true, 'attempts': _wrongLocks + 1});
+          Navigator.pop(context, {'success': true, 'attempts': _wrongTries + 1});
         }
       });
       return;
@@ -154,12 +225,12 @@ class _LessonLiveSignScreenState extends State<LessonLiveSignScreen> {
       if (_resetTimer?.isActive != true) {
         setState(() {
           _state = s;
-          _wrongLocks++;
+          _tryCounted = true; // don't count this hand cycle again
         });
-        _countFailure();
         _resetTimer = Timer(resetDelay, () {
           if (mounted && !_done) _resetRecognizer();
         });
+        _countTry();
       } else {
         setState(() => _state = s);
       }
@@ -167,8 +238,6 @@ class _LessonLiveSignScreenState extends State<LessonLiveSignScreen> {
     }
 
     setState(() => _state = s);
-    if (s.notRecognized && !_lastNotRecognized) _countFailure();
-    _lastNotRecognized = s.notRecognized;
 
     if (!_started && s.handCount > 0) {
       _started = true;
@@ -180,14 +249,14 @@ class _LessonLiveSignScreenState extends State<LessonLiveSignScreen> {
 
   Future<void> _showHint() async {
     if (_paused) return;
-    _failures = 0;
-    _paused = true; // don't count locks that happen while the dialog is open
+    _paused = true; // don't count tries that happen while the dialog is open
     await showDialog<void>(
       context: context,
       builder: (_) => _HintDialog(
           lesson: widget.lesson, months: widget.category.id == 'months'),
     );
     _paused = false;
+    _resetHandTracking(); // start a clean hand cycle after the dialog
     if (mounted && !_done) _resetRecognizer(); // start clean after watching
   }
 
@@ -205,7 +274,7 @@ class _LessonLiveSignScreenState extends State<LessonLiveSignScreen> {
           if (_skipAvailable && !_done)
             TextButton(
               onPressed: () => Navigator.pop(
-                  context, {'skipped': true, 'attempts': _wrongLocks}),
+                  context, {'skipped': true, 'attempts': _wrongTries}),
               child: const Text('Skip'),
             ),
         ],
@@ -293,15 +362,17 @@ class _LessonLiveSignScreenState extends State<LessonLiveSignScreen> {
                 child: Stack(
                   fit: StackFit.expand,
                   children: [
-                    _mountView ? LiveSignView(
-                      resetToken: _session,
-                      candidates: _titleByLabel.keys.toList(),
-                      expected: _target,
-                      letters: widget.category.id == lettersCategoryId,
-                      onUpdate: _onUpdate,
-                    ): const Center (
-                      child: CircularProgressIndicator(color: Color(0xFF0D9488))
-                    ),
+                    _mountView
+                        ? LiveSignView(
+                            resetToken: _session,
+                            candidates: _titleByLabel.keys.toList(),
+                            expected: _target,
+                            letters: widget.category.id == lettersCategoryId,
+                            onUpdate: _onUpdate,
+                          )
+                        : const Center(
+                            child: CircularProgressIndicator(
+                                color: Color(0xFF0D9488))),
                     if (kShowDebugUi && s != null && s.top3.isNotEmpty)
                       Positioned(
                           top: 10,
