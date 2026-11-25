@@ -67,7 +67,11 @@ class _LessonLiveSignScreenState extends State<LessonLiveSignScreen> {
   // A hand cycle only counts as a try if hands were visible at least this
   // long, and then gone for at least [handsGoneDelay]. Filters out flicker.
   static const Duration minTryHold = Duration(milliseconds: 600);
-  static const Duration handsGoneDelay = Duration(milliseconds: 800);
+  // Backup only: a try normally counts when the recognizer says "Not
+  // recognized". This must stay longer than the recognizer's end-of-sign wait
+  // (0.7 s Android, 1.0 s iPhone) plus the models' time, so a correct sign's
+  // result always arrives before a try is counted.
+  static const Duration handsGoneDelay = Duration(milliseconds: 1800);
 
   late final Map<String, String> _titleByLabel = {
     for (final l in widget.category.lessons) modelLabelForLesson(l.id): l.title
@@ -99,6 +103,8 @@ class _LessonLiveSignScreenState extends State<LessonLiveSignScreen> {
   bool _handsVisible = false;
   DateTime? _handsStart;
   bool _tryCounted = false; // this hand cycle already counted as a try
+  bool _lastNotRecognized = false; // to count each "Not recognized" once
+  LiveSignState? _lateMatch; // correct result that came while the pop-up was open
 
   bool get _hintAvailable => _wrongTries >= hintAfterWrong || _hintByTime;
   bool get _skipAvailable =>
@@ -195,31 +201,50 @@ class _LessonLiveSignScreenState extends State<LessonLiveSignScreen> {
     }
   }
 
+  /// The target sign was matched: show the green bar, then go back.
+  void _succeed(LiveSignState s) {
+    setState(() {
+      _state = s;
+      _done = true;
+    });
+    _hintTimer?.cancel();
+    _skipTimer?.cancel();
+    _resetTimer?.cancel();
+    _goneTimer?.cancel();
+    _popupTimer?.cancel();
+    // Let the green "Correct!" bar show briefly, then return to the player.
+    Future.delayed(const Duration(milliseconds: 900), () {
+      if (mounted) {
+        Navigator.pop(context, {'success': true, 'attempts': _wrongTries + 1});
+      }
+    });
+  }
+
   void _onUpdate(LiveSignState s) {
-    if (_done || _paused) return;
+    if (_done) return;
     final sign = s.prediction.sign;
+
+    // A correct result that arrives while the hint pop-up is open still
+    // counts; it is applied when the pop-up closes.
+    if (_paused) {
+      if (s.locked && sign == _target) _lateMatch = s;
+      return;
+    }
 
     _trackTries(s);
 
     // Correct sign.
     if (s.locked && sign == _target) {
-      setState(() {
-        _state = s;
-        _done = true;
-      });
-      _hintTimer?.cancel();
-      _skipTimer?.cancel();
-      _resetTimer?.cancel();
-      _goneTimer?.cancel();
-      _popupTimer?.cancel();
-      // Let the green "Correct!" bar show briefly, then return to the player.
-      Future.delayed(const Duration(milliseconds: 900), () {
-        if (mounted) {
-          Navigator.pop(context, {'success': true, 'attempts': _wrongTries + 1});
-        }
-      });
+      _succeed(s);
       return;
     }
+
+    // "Not recognized" verdict after the hands were lowered: one wrong try.
+    if (s.notRecognized && !_lastNotRecognized) {
+      _tryCounted = true; // the hands-gone backup must not count it again
+      _countTry();
+    }
+    _lastNotRecognized = s.notRecognized;
 
     // Wrong sign locked: count it once, show "try again" briefly, then reset
     // the recognizer so the lock can't stay stuck on the wrong sign.
@@ -258,6 +283,12 @@ class _LessonLiveSignScreenState extends State<LessonLiveSignScreen> {
           lesson: widget.lesson, months: widget.category.id == 'months'),
     );
     _paused = false;
+    final late = _lateMatch;
+    _lateMatch = null;
+    if (late != null && mounted && !_done) {
+      _succeed(late);
+      return;
+    }
     _resetHandTracking(); // start a clean hand cycle after the dialog
     if (mounted && !_done) _resetRecognizer(); // start clean after watching
   }
