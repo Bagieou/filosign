@@ -22,9 +22,8 @@ const _bg = Color(0xFFF6FBFA);
 ///     itself (once). Afterwards the "Watch again" button stays above the
 ///     status banner so it can be reopened. (The button also appears after
 ///     [hintAfterSeconds] with hands visible.)
-///   - after [skipAfterWrong] wrong tries (= hint + 2 more tries): "Skip"
-///     (or [skipFallbackSeconds] if a hand was NEVER detected, e.g. camera
-///     or hand detection not working)
+///   - after [skipAfterWrong] wrong tries (one more try after the hint):
+///     "Skip" (or after [skipFallbackSeconds] on screen)
 ///
 /// A "wrong try" is either:
 ///   - the recognizer locked onto a wrong sign, or
@@ -54,10 +53,12 @@ class LessonLiveSignScreen extends StatefulWidget {
 }
 
 class _LessonLiveSignScreenState extends State<LessonLiveSignScreen> {
-  static const int hintAfterWrong = 3;
-  static const int skipAfterWrong = hintAfterWrong + 2; // 2 more tries after hint
+  // REQ026 (manuscript): hint after 2 wrong tries or 20 s with hands
+  // visible; Skip after 3 wrong tries or 45 s on screen.
+  static const int hintAfterWrong = 2;
+  static const int skipAfterWrong = 3;
   static const int hintAfterSeconds = 20; // counted from the first hand seen
-  static const int skipFallbackSeconds = 45; // only if no hand was ever seen
+  static const int skipFallbackSeconds = 45; // counted from screen open
   static const Duration resetDelay = Duration(milliseconds: 1200);
 
   // Pause before the auto pop-up so "Try again" is visible for a moment.
@@ -100,14 +101,15 @@ class _LessonLiveSignScreenState extends State<LessonLiveSignScreen> {
   bool _tryCounted = false; // this hand cycle already counted as a try
 
   bool get _hintAvailable => _wrongTries >= hintAfterWrong || _hintByTime;
-  bool get _skipAvailable => _wrongTries >= skipAfterWrong || _skipByTime;
+  bool get _skipAvailable =>
+      !kLiveSignSupported || _wrongTries >= skipAfterWrong || _skipByTime;
 
   @override
   void initState() {
     super.initState();
-    // Safety net only: if no hand is ever detected, let the user skip.
+    // REQ026: Skip also appears after 45 seconds on screen.
     _skipTimer = Timer(const Duration(seconds: skipFallbackSeconds), () {
-      if (mounted && !_done && !_started) setState(() => _skipByTime = true);
+      if (mounted && !_done) setState(() => _skipByTime = true);
     });
     Future.delayed(const Duration(milliseconds: 500), () {
       if (mounted) setState(() => _mountView = true);
