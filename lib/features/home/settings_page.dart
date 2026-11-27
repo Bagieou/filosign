@@ -8,6 +8,7 @@
   import '../../widgets/coach_marks.dart';
   import '../auth/auth_page.dart' as auth;
   import '../auth/otp_verification_screen.dart';
+  import '../auth/network_errors.dart';
 
   class SettingsPage extends StatefulWidget {
     const SettingsPage({super.key});
@@ -650,7 +651,11 @@
         _showMessage(_accountErrorMessage(e.code ?? ''), isError: true);
       } catch (e) {
         if (!mounted) return;
-        _showMessage('Error deleting account: $e', isError: true);
+        _showMessage(
+            isNetworkError(e)
+                ? kNoInternetMessage
+                : 'Could not delete your account. Please try again.',
+            isError: true);
       }
     }
   }

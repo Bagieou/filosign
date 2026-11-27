@@ -1,4 +1,5 @@
 import 'package:filosign/features/auth/legal_document_modal.dart';
+import 'package:filosign/features/auth/network_errors.dart';
 import 'package:filosign/features/auth/otp_verification_screen.dart';
 import 'package:filosign/features/home/home_page.dart';
 import 'package:filosign/app_version.dart';
@@ -39,6 +40,7 @@ String? passwordValidationMessage(String? value) {
 //Messages Sign-in-sign-up
 String _authErrorMessage(String? message) {
   if (message == null) return 'Something went wrong. Please try again.';
+  if (isNetworkError(message)) return kNoInternetMessage;
   final lower = message.toLowerCase();
   if (lower.contains('invalid email') || lower.contains('invalid-credential')) {
     return 'Enter a valid email address.';
@@ -189,7 +191,7 @@ class _AuthPageState extends State<AuthPage> {
       }
     } catch (e) {
       if (!mounted) return;
-      _showError('An unexpected error occurred.');
+      _showError(isNetworkError(e) ? kNoInternetMessage : 'An unexpected error occurred.');
     } finally {
       if (mounted) setState(() => _isLoading = false);
     }
@@ -232,22 +234,25 @@ class _AuthPageState extends State<AuthPage> {
         (route) => false,
       );
     } on AuthException catch (e) {
-      // Increment failed attempts
-      _failedAttempts++;
-      _saveLockoutState();
-
-      // Check if locked out after 5 failures
-      if (_failedAttempts >= 5) {
-        _isLockedOut = true;
-        _lockUntil = DateTime.now().add(const Duration(minutes: 15));
+      // No internet is not a wrong password: don't count it toward the lockout
+      if (!isNetworkError(e.message)) {
+        // Increment failed attempts
+        _failedAttempts++;
         _saveLockoutState();
+
+        // Check if locked out after 5 failures
+        if (_failedAttempts >= 5) {
+          _isLockedOut = true;
+          _lockUntil = DateTime.now().add(const Duration(minutes: 15));
+          _saveLockoutState();
+        }
       }
 
       if (!mounted) return;
       _showError(_authErrorMessage(e.message));
     } catch (e) {
       if (!mounted) return;
-      _showError('An unexpected error occurred.');
+      _showError(isNetworkError(e) ? kNoInternetMessage : 'An unexpected error occurred.');
     } finally {
       if (mounted) setState(() => _isLoading = false);
     }
@@ -291,22 +296,25 @@ class _AuthPageState extends State<AuthPage> {
         ),
       );
     } on AuthException catch (e) {
-      // Increment failed attempts
-      _failedAttempts++;
-      _saveLockoutState();
-
-      // Check if locked out after 5 failures
-      if (_failedAttempts >= 5) {
-        _isLockedOut = true;
-        _lockUntil = DateTime.now().add(const Duration(minutes: 15));
+      // No internet is not a failed attempt: don't count it toward the lockout
+      if (!isNetworkError(e.message)) {
+        // Increment failed attempts
+        _failedAttempts++;
         _saveLockoutState();
+
+        // Check if locked out after 5 failures
+        if (_failedAttempts >= 5) {
+          _isLockedOut = true;
+          _lockUntil = DateTime.now().add(const Duration(minutes: 15));
+          _saveLockoutState();
+        }
       }
 
       if (!mounted) return;
-      _showError('An error occurred.');
+      _showError(isNetworkError(e.message) ? kNoInternetMessage : 'An error occurred.');
     } catch (e) {
       if (!mounted) return;
-      _showError('An unexpected error occurred.');
+      _showError(isNetworkError(e) ? kNoInternetMessage : 'An unexpected error occurred.');
     } finally {
       if (mounted) setState(() => _isLoading = false);
     }
@@ -342,10 +350,10 @@ class _AuthPageState extends State<AuthPage> {
       );
     } on AuthException catch (e) {
       if (!mounted) return;
-      _showError('An error occurred.');
-    } catch (_) {
+      _showError(isNetworkError(e.message) ? kNoInternetMessage : 'An error occurred.');
+    } catch (e) {
       if (!mounted) return;
-      _showError('An error occurred.');
+      _showError(isNetworkError(e) ? kNoInternetMessage : 'An error occurred.');
     } finally {
       if (mounted) setState(() => _isLoading = false);
     }
@@ -781,6 +789,8 @@ Future<void> _openPrivacy() async {
   Widget build(BuildContext context) {
     return Scaffold(
       body: Container(
+        // fill the whole screen, so no flat strip shows under the card
+        constraints: const BoxConstraints.expand(),
         decoration: const BoxDecoration(
           gradient: LinearGradient(
             colors: [Color(0xFFF7FFFD), Color(0xFFE6F8F4), Color(0xFFFFF4E8)],

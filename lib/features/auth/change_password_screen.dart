@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
 import '../home/home_page.dart';
+import 'network_errors.dart';
 
 class ChangePasswordScreen extends StatefulWidget {
   final String email;
@@ -88,7 +89,7 @@ class _ChangePasswordScreenState extends State<ChangePasswordScreen> {
       _showError(_authErrorMessage(e.message));
     } catch (e) {
       if (!mounted) return;
-      _showError('An unexpected error occurred.');
+      _showError(isNetworkError(e) ? kNoInternetMessage : 'An unexpected error occurred.');
     } finally {
       if (mounted) setState(() => _isLoading = false);
     }
@@ -103,6 +104,7 @@ class _ChangePasswordScreenState extends State<ChangePasswordScreen> {
 
   String _authErrorMessage(String? message) {
     if (message == null) return 'Something went wrong. Please try again.';
+    if (isNetworkError(message)) return kNoInternetMessage;
     final lower = message.toLowerCase();
     if (lower.contains('invalid email') || lower.contains('invalid-credential')) {
       return 'Enter a valid email address.';

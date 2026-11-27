@@ -13,6 +13,7 @@ import '../practice/live_sign_view.dart';
 import '../../recognizer/v4_sign_recognizer.dart';
 import 'package:filosign/widgets/celebration_overlay.dart';
 import 'package:filosign/learn/learn_routes.dart';
+import 'package:filosign/features/auth/network_errors.dart';
 
 const _teal = Color(0xFF087F73);
 const _ink = Color(0xFF153B39);
@@ -194,11 +195,17 @@ class _QuizScreenState extends State<QuizScreen> {
         _celebrating = passed;
       });
     } on PostgrestException catch (e) {
-      _saveError('Could not save score: ${e.message}');
+      _saveError(isNetworkError(e.message)
+          ? kNoInternetMessage
+          : 'Could not save score: ${e.message}');
     } on AuthException catch (e) {
-      _saveError('Auth error: ${e.code ?? 'unknown'}');
-    } catch (_) {
-      _saveError('Could not submit quiz score. Please try again.');
+      _saveError(isNetworkError(e.message)
+          ? kNoInternetMessage
+          : 'Your session expired. Please sign in again, then retake the quiz.');
+    } catch (e) {
+      _saveError(isNetworkError(e)
+          ? kNoInternetMessage
+          : 'Could not submit quiz score. Please try again.');
     }
   }
 
