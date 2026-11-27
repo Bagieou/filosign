@@ -126,7 +126,7 @@ class _LivePracticeScreenState extends State<LivePracticeScreen> {
             left: 12,
             right: 12,
             child: GestureDetector(
-              onTap: (s?.locked ?? false) ? _again : null,
+              onTap: _again, // REQ037: tapping the banner starts a new attempt
               child: FeedbackBanner(
                 sign: s?.prediction.sign == null ? null : _title(s!.prediction.sign!),
                 confidence: s?.prediction.confidence ?? 0,
