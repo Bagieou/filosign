@@ -451,10 +451,15 @@ class _LessonPlayerScreenState extends State<LessonPlayerScreen> {
                       padding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
                       child: Row(
                         children: [
-                          Text(
-                            _buildTimeText(_controller!.value.position),
-                            style: const TextStyle(
-                                color: Colors.white, fontSize: 12),
+                          // rebuilds on every video tick, so the time counts
+                          // up while playing (not only after a pause)
+                          ValueListenableBuilder<VideoPlayerValue>(
+                            valueListenable: _controller!,
+                            builder: (context, value, child) => Text(
+                              _buildTimeText(value.position),
+                              style: const TextStyle(
+                                  color: Colors.white, fontSize: 12),
+                            ),
                           ),
                           const Spacer(),
                           Text(
