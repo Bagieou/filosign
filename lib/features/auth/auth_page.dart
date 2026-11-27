@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:filosign/features/auth/legal_document_modal.dart';
 import 'package:filosign/features/auth/network_errors.dart';
 import 'package:filosign/features/auth/otp_verification_screen.dart';
@@ -86,8 +88,12 @@ class _AuthPageState extends State<AuthPage> {
   int _failedAttempts = 0;
   DateTime? _lockUntil;
 
+  // re-enables the buttons by itself when the 15-minute lock ends
+  Timer? _lockTimer;
+
   @override
   void dispose() {
+    _lockTimer?.cancel();
     _emailController.dispose();
     _passwordController.dispose();
     _nameController.dispose();
@@ -98,6 +104,18 @@ class _AuthPageState extends State<AuthPage> {
   void initState() {
     super.initState();
     _loadLockoutState();
+    _lockTimer = Timer.periodic(const Duration(seconds: 10), (_) {
+      if (mounted && _isLockedOut) setState(_checkLockout);
+    });
+  }
+
+  /// REQ013: cooldown message shown while sign-in is locked.
+  String get _lockMessage {
+    final until = _lockUntil;
+    if (until == null) return 'Too many failed attempts. Please try again later.';
+    final h = until.hour % 12 == 0 ? 12 : until.hour % 12;
+    final m = until.minute.toString().padLeft(2, '0');
+    return 'Too many failed attempts. Try again at $h:$m ${until.hour < 12 ? 'AM' : 'PM'}.';
   }
 
   Future<void> _loadLockoutState() async {
@@ -717,6 +735,19 @@ Future<void> _openPrivacy() async {
             ),
 
             const SizedBox(height: 12),
+
+            if (!_isSignUp && _isLockedOut)
+              Padding(
+                padding: const EdgeInsets.only(bottom: 8),
+                child: Text(
+                  _lockMessage,
+                  textAlign: TextAlign.center,
+                  style: const TextStyle(
+                      color: Color(0xFFC0392B),
+                      fontSize: 13,
+                      fontWeight: FontWeight.w600),
+                ),
+              ),
 
             // Alternative sign-in options - show based on action
             if (!_isSignUp) ...[
