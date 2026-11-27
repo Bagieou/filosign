@@ -22,9 +22,8 @@ const _bg = Color(0xFFF6FBFA);
 ///     itself (once). Afterwards the "Watch again" button stays above the
 ///     status banner so it can be reopened. (The button also appears after
 ///     [hintAfterSeconds] with hands visible.)
-///   - after [skipAfterWrong] wrong tries (= hint + 2 more tries): "Skip"
-///     (or [skipFallbackSeconds] if a hand was NEVER detected, e.g. camera
-///     or hand detection not working)
+///   - after [skipAfterWrong] wrong tries (one more try after the hint):
+///     "Skip" (or after [skipFallbackSeconds] on screen)
 ///
 /// A "wrong try" is either:
 ///   - the recognizer locked onto a wrong sign, or
@@ -54,10 +53,12 @@ class LessonLiveSignScreen extends StatefulWidget {
 }
 
 class _LessonLiveSignScreenState extends State<LessonLiveSignScreen> {
-  static const int hintAfterWrong = 3;
-  static const int skipAfterWrong = hintAfterWrong + 2; // 2 more tries after hint
+  // REQ026 (manuscript): hint after 2 wrong tries or 20 s with hands
+  // visible; Skip after 3 wrong tries or 45 s on screen.
+  static const int hintAfterWrong = 2;
+  static const int skipAfterWrong = 3;
   static const int hintAfterSeconds = 20; // counted from the first hand seen
-  static const int skipFallbackSeconds = 45; // only if no hand was ever seen
+  static const int skipFallbackSeconds = 45; // counted from screen open
   static const Duration resetDelay = Duration(milliseconds: 1200);
 
   // Pause before the auto pop-up so "Try again" is visible for a moment.
@@ -66,7 +67,11 @@ class _LessonLiveSignScreenState extends State<LessonLiveSignScreen> {
   // A hand cycle only counts as a try if hands were visible at least this
   // long, and then gone for at least [handsGoneDelay]. Filters out flicker.
   static const Duration minTryHold = Duration(milliseconds: 600);
-  static const Duration handsGoneDelay = Duration(milliseconds: 800);
+  // Backup only: a try normally counts when the recognizer says "Not
+  // recognized". This must stay longer than the recognizer's end-of-sign wait
+  // (0.7 s Android, 1.0 s iPhone) plus the models' time, so a correct sign's
+  // result always arrives before a try is counted.
+  static const Duration handsGoneDelay = Duration(milliseconds: 1800);
 
   late final Map<String, String> _titleByLabel = {
     for (final l in widget.category.lessons) modelLabelForLesson(l.id): l.title
@@ -98,16 +103,19 @@ class _LessonLiveSignScreenState extends State<LessonLiveSignScreen> {
   bool _handsVisible = false;
   DateTime? _handsStart;
   bool _tryCounted = false; // this hand cycle already counted as a try
+  bool _lastNotRecognized = false; // to count each "Not recognized" once
+  LiveSignState? _lateMatch; // correct result that came while the pop-up was open
 
   bool get _hintAvailable => _wrongTries >= hintAfterWrong || _hintByTime;
-  bool get _skipAvailable => _wrongTries >= skipAfterWrong || _skipByTime;
+  bool get _skipAvailable =>
+      !kLiveSignSupported || _wrongTries >= skipAfterWrong || _skipByTime;
 
   @override
   void initState() {
     super.initState();
-    // Safety net only: if no hand is ever detected, let the user skip.
+    // REQ026: Skip also appears after 45 seconds on screen.
     _skipTimer = Timer(const Duration(seconds: skipFallbackSeconds), () {
-      if (mounted && !_done && !_started) setState(() => _skipByTime = true);
+      if (mounted && !_done) setState(() => _skipByTime = true);
     });
     Future.delayed(const Duration(milliseconds: 500), () {
       if (mounted) setState(() => _mountView = true);
@@ -193,31 +201,50 @@ class _LessonLiveSignScreenState extends State<LessonLiveSignScreen> {
     }
   }
 
+  /// The target sign was matched: show the green bar, then go back.
+  void _succeed(LiveSignState s) {
+    setState(() {
+      _state = s;
+      _done = true;
+    });
+    _hintTimer?.cancel();
+    _skipTimer?.cancel();
+    _resetTimer?.cancel();
+    _goneTimer?.cancel();
+    _popupTimer?.cancel();
+    // Let the green "Correct!" bar show briefly, then return to the player.
+    Future.delayed(const Duration(milliseconds: 900), () {
+      if (mounted) {
+        Navigator.pop(context, {'success': true, 'attempts': _wrongTries + 1});
+      }
+    });
+  }
+
   void _onUpdate(LiveSignState s) {
-    if (_done || _paused) return;
+    if (_done) return;
     final sign = s.prediction.sign;
+
+    // A correct result that arrives while the hint pop-up is open still
+    // counts; it is applied when the pop-up closes.
+    if (_paused) {
+      if (s.locked && sign == _target) _lateMatch = s;
+      return;
+    }
 
     _trackTries(s);
 
     // Correct sign.
     if (s.locked && sign == _target) {
-      setState(() {
-        _state = s;
-        _done = true;
-      });
-      _hintTimer?.cancel();
-      _skipTimer?.cancel();
-      _resetTimer?.cancel();
-      _goneTimer?.cancel();
-      _popupTimer?.cancel();
-      // Let the green "Correct!" bar show briefly, then return to the player.
-      Future.delayed(const Duration(milliseconds: 900), () {
-        if (mounted) {
-          Navigator.pop(context, {'success': true, 'attempts': _wrongTries + 1});
-        }
-      });
+      _succeed(s);
       return;
     }
+
+    // "Not recognized" verdict after the hands were lowered: one wrong try.
+    if (s.notRecognized && !_lastNotRecognized) {
+      _tryCounted = true; // the hands-gone backup must not count it again
+      _countTry();
+    }
+    _lastNotRecognized = s.notRecognized;
 
     // Wrong sign locked: count it once, show "try again" briefly, then reset
     // the recognizer so the lock can't stay stuck on the wrong sign.
@@ -256,6 +283,12 @@ class _LessonLiveSignScreenState extends State<LessonLiveSignScreen> {
           lesson: widget.lesson, months: widget.category.id == 'months'),
     );
     _paused = false;
+    final late = _lateMatch;
+    _lateMatch = null;
+    if (late != null && mounted && !_done) {
+      _succeed(late);
+      return;
+    }
     _resetHandTracking(); // start a clean hand cycle after the dialog
     if (mounted && !_done) _resetRecognizer(); // start clean after watching
   }

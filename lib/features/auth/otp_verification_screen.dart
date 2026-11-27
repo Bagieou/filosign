@@ -3,6 +3,7 @@ import 'package:supabase_flutter/supabase_flutter.dart';
 
 import '../home/home_page.dart';
 import 'change_password_screen.dart';
+import 'network_errors.dart';
 
 class OtpVerificationScreen extends StatefulWidget {
   final String email;
@@ -81,10 +82,10 @@ class _OtpVerificationScreenState extends State<OtpVerificationScreen> {
       }  
     } on AuthException catch (e) {
       if (!mounted) return;
-      _showError(e.message);
-    } catch (_) {
+      _showError(isNetworkError(e.message) ? kNoInternetMessage : e.message);
+    } catch (e) {
       if (!mounted) return;
-      _showError('Invalid OTP. Please try again.');
+      _showError(isNetworkError(e) ? kNoInternetMessage : 'Invalid OTP. Please try again.');
     } finally {
       if (mounted) setState(() => _isLoading = false);
     }

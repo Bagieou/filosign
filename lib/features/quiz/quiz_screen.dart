@@ -13,6 +13,7 @@ import '../practice/live_sign_view.dart';
 import '../../recognizer/v4_sign_recognizer.dart';
 import 'package:filosign/widgets/celebration_overlay.dart';
 import 'package:filosign/learn/learn_routes.dart';
+import 'package:filosign/features/auth/network_errors.dart';
 
 const _teal = Color(0xFF087F73);
 const _ink = Color(0xFF153B39);
@@ -194,11 +195,17 @@ class _QuizScreenState extends State<QuizScreen> {
         _celebrating = passed;
       });
     } on PostgrestException catch (e) {
-      _saveError('Could not save score: ${e.message}');
+      _saveError(isNetworkError(e.message)
+          ? kNoInternetMessage
+          : 'Could not save score: ${e.message}');
     } on AuthException catch (e) {
-      _saveError('Auth error: ${e.code ?? 'unknown'}');
-    } catch (_) {
-      _saveError('Could not submit quiz score. Please try again.');
+      _saveError(isNetworkError(e.message)
+          ? kNoInternetMessage
+          : 'Your session expired. Please sign in again, then retake the quiz.');
+    } catch (e) {
+      _saveError(isNetworkError(e)
+          ? kNoInternetMessage
+          : 'Could not submit quiz score. Please try again.');
     }
   }
 
@@ -519,9 +526,16 @@ class _LiveQuestionState extends State<_LiveQuestion> {
   late final String _target = modelLabelForLesson(widget.lesson.id);
 
   Timer? _timer;
+  Timer? _graceTimer;
   late int _left = widget.seconds;
   bool _started = false; // countdown starts once a hand is seen
   bool _done = false;
+  DateTime? _lastHandAt; // last time a hand was in view
+
+  // A sign finished just before time ran out is judged only after the hands
+  // are lowered (0.7 s Android, 1.0 s iPhone, plus the models' time), so its
+  // result is waited for this long before the question counts as missed.
+  static const Duration _judgeGrace = Duration(milliseconds: 1800);
   bool _mountView = false;
   LiveSignState? _state;
 
@@ -539,12 +553,18 @@ class _LiveQuestionState extends State<_LiveQuestion> {
   @override
   void dispose() {
     _timer?.cancel();
+    _graceTimer?.cancel();
     super.dispose();
+  }
+
+  void _timeUp() {
+    _finish(false, _titleOf(_state?.prediction.sign) ?? 'no match in time');
   }
 
   void _onUpdate(LiveSignState s) {
     if (_done) return;
     setState(() => _state = s);
+    if (s.handCount > 0) _lastHandAt = DateTime.now();
     if (!_started && s.handCount > 0) {
       _started = true;
       _timer = Timer.periodic(const Duration(seconds: 1), (t) {
@@ -552,8 +572,17 @@ class _LiveQuestionState extends State<_LiveQuestion> {
         setState(() => _left--);
         if (_left <= 0) {
           t.cancel();
-          _finish(false,
-              _titleOf(_state?.prediction.sign) ?? 'no match in time');
+          final last = _lastHandAt;
+          final justLowered = last != null &&
+              DateTime.now().difference(last) < const Duration(seconds: 2);
+          if (justLowered) {
+            // wait for the judgment of the sign that was just finished
+            _graceTimer = Timer(_judgeGrace, () {
+              if (mounted && !_done) _timeUp();
+            });
+          } else {
+            _timeUp();
+          }
         }
       });
     }
@@ -570,6 +599,7 @@ class _LiveQuestionState extends State<_LiveQuestion> {
     if (_done) return;
     _done = true;
     _timer?.cancel();
+    _graceTimer?.cancel();
     widget.onResult(ok, text);
   }
 

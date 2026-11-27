@@ -3,11 +3,11 @@ import 'dart:async';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:flutter/material.dart';
 
-import '../../app_settings.dart';
-import '../../app_version.dart';
-import '../../widgets/coach_marks.dart';
-import '../auth/auth_page.dart' as auth;
-import '../auth/otp_verification_screen.dart';
+  import '../../app_settings.dart';
+  import '../../app_version.dart';
+  import '../../widgets/coach_marks.dart';
+  import '../auth/auth_page.dart' as auth;
+  import '../auth/otp_verification_screen.dart';
 
 class SettingsPage extends StatefulWidget {
   const SettingsPage({super.key});
@@ -621,93 +621,48 @@ class _SettingsPageState extends State<SettingsPage> {
     await _sendOtpForReauthentication(user.email!);
   }
 
-  Future<void> _sendOtpForReauthentication(String email) async {
-    try {
-      // 1. Ask GoTrue to email a reauth OTP.
-      await Supabase.instance.client.auth.reauthenticate();
-    } on AuthException catch (e) {
-      debugPrint('reauthenticate failed: code=${e.code} msg=${e.message}');
-      _showMessage(_accountErrorMessage(e.code ?? ''), isError: true);
-      return;
-    } catch (e) {
-      debugPrint('reauthenticate unexpected: $e');
-      _showMessage('Could not send OTP for account deletion.', isError: true);
-      return;
-    }
-
-    if (!mounted) return;
-
-    // 2. Collect the 6-digit code.
-    final String? code = await Navigator.of(context).push<String>(
-      MaterialPageRoute(
-        builder: (_) => OtpVerificationScreen(
-          email: email,
-          action: 'reauthenticate',
-        ),
-      ),
-    );
-
-    if (code == null || code.trim().isEmpty || !mounted) return;
-
-    // 3. Verify + delete.
-    await _deleteAccountWithOtpVerified(code.trim());
-  }
-
-  Future<void> _deleteAccountWithOtpVerified(String code) async {
-    final client = Supabase.instance.client;
-    try {
-      final res = await client.functions.invoke(
-        'delete-account',
-        body: {'code': code},
-      );
-      if (res.status != 200) throw Exception('delete failed');
-      await client.auth.signOut();
-      if (!mounted) return;
-     
-      await showDialog<void>(
-        context: context,
-        barrierDismissible: false,
-        builder: (dialogContext) => PopScope(
-          canPop: false, // force the user to tap OK
-          child: AlertDialog(
-            icon: const Icon(
-              Icons.check_circle_rounded,
-              color: Color(0xFF087F73),
-              size: 42,
+    Future<void> _sendOtpForReauthentication(String email) async {
+      try {
+        await Supabase.instance.client.auth.reauthenticate();
+        if (!mounted) return;
+        final String? otpNonce = await Navigator.of(context).push<String>(
+          MaterialPageRoute(
+            builder: (_) => OtpVerificationScreen(
+              email: email,
+              action: 'reauthenticate',
             ),
-            title: const Text('Account deleted'),
-            content: const Text(
-              'Your account and all associated data have been permanently '
-              'deleted. You will now be returned to the sign-in page.',
-            ),
-            actions: [
-              FilledButton(
-                onPressed: () => Navigator.pop(dialogContext),
-                child: const Text('OK'),
-              ),
-            ],
           ),
-        ),
-      );
-
-      if (!mounted) return;
-      Navigator.of(context).pushAndRemoveUntil(
-        MaterialPageRoute(builder: (_) => auth.AuthPage()),
-        (route) => false,
-      );
-    } on FunctionException catch (e) {
-      debugPrint('delete-account: status=${e.status} details=${e.details}');
-      _showMessage(
-        e.status == 403
-            ? "That code didn't work. It may be incorrect or expired — please try again."
-            : "We couldn't delete your account right now. Please try again.",
-        isError: true,
-      );
-    } catch (e) {
-      debugPrint('delete-account unexpected: $e');
-      _showMessage("We couldn't delete your account right now. Please try again.",
-          isError: true);
+        );
+        if (otpNonce != null && mounted) {
+          await _deleteAccountWithOtpVerified(otpNonce);
+        }
+      } on AuthException catch (e) {
+        _showMessage(_accountErrorMessage(e.code ?? ''), isError: true);
+      } catch (_) {
+        _showMessage('Could not send OTP for account deletion.', isError: true);
+      }
     }
-  
-}
-}
+
+    Future<void> _deleteAccountWithOtpVerified(String otpNonce) async {
+      final user = Supabase.instance.client.auth.currentUser;
+      if (user == null) return;
+      try {
+        // server deletes account and progress
+        final res = await Supabase.instance.client.functions.invoke('delete-account');
+        if (res.status != 200) throw Exception(res.data);
+        
+        await Supabase.instance.client.auth.signOut();
+        Navigator.of(context).pushAndRemoveUntil(
+          MaterialPageRoute(builder: (_) => auth.AuthPage()),
+          (route) => false,
+        );
+        _showMessage('Account permanently deleted.');
+      } on AuthException catch (e) {
+        if (!mounted) return;
+        _showMessage(_accountErrorMessage(e.code ?? ''), isError: true);
+      } catch (e) {
+        if (!mounted) return;
+        _showMessage('Error deleting account: $e', isError: true);
+      }
+    }
+  }

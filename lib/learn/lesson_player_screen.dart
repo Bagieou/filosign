@@ -398,7 +398,7 @@ class _LessonPlayerScreenState extends State<LessonPlayerScreen> {
                   mainAxisSize: MainAxisSize.min,
                   children: [
                     _buildControlButton(
-                      icon: Icons.replay_10_rounded,
+                      icon: Icons.fast_rewind_rounded, // seeks 3 s (REQ023)
                       onPressed: _seekBackward,
                       tooltip: 'Rewind 3s',
                     ),
@@ -413,7 +413,7 @@ class _LessonPlayerScreenState extends State<LessonPlayerScreen> {
                     ),
                     const SizedBox(width: 16),
                     _buildControlButton(
-                      icon: Icons.forward_10_rounded,
+                      icon: Icons.fast_forward_rounded, // seeks 3 s (REQ023)
                       onPressed: _seekForward,
                       tooltip: 'Forward 3s',
                     ),
@@ -451,10 +451,15 @@ class _LessonPlayerScreenState extends State<LessonPlayerScreen> {
                       padding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
                       child: Row(
                         children: [
-                          Text(
-                            _buildTimeText(_controller!.value.position),
-                            style: const TextStyle(
-                                color: Colors.white, fontSize: 12),
+                          // rebuilds on every video tick, so the time counts
+                          // up while playing (not only after a pause)
+                          ValueListenableBuilder<VideoPlayerValue>(
+                            valueListenable: _controller!,
+                            builder: (context, value, child) => Text(
+                              _buildTimeText(value.position),
+                              style: const TextStyle(
+                                  color: Colors.white, fontSize: 12),
+                            ),
                           ),
                           const Spacer(),
                           Text(

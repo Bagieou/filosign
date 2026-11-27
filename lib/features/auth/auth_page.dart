@@ -1,4 +1,7 @@
+import 'dart:async';
+
 import 'package:filosign/features/auth/legal_document_modal.dart';
+import 'package:filosign/features/auth/network_errors.dart';
 import 'package:filosign/features/auth/otp_verification_screen.dart';
 import 'package:filosign/features/home/home_page.dart';
 import 'package:filosign/app_version.dart';
@@ -39,6 +42,7 @@ String? passwordValidationMessage(String? value) {
 //Messages Sign-in-sign-up
 String _authErrorMessage(String? message) {
   if (message == null) return 'Something went wrong. Please try again.';
+  if (isNetworkError(message)) return kNoInternetMessage;
   final lower = message.toLowerCase();
   if (lower.contains('invalid email') || lower.contains('invalid-credential')) {
     return 'Enter a valid email address.';
@@ -84,8 +88,12 @@ class _AuthPageState extends State<AuthPage> {
   int _failedAttempts = 0;
   DateTime? _lockUntil;
 
+  // re-enables the buttons by itself when the 15-minute lock ends
+  Timer? _lockTimer;
+
   @override
   void dispose() {
+    _lockTimer?.cancel();
     _emailController.dispose();
     _passwordController.dispose();
     _nameController.dispose();
@@ -96,6 +104,18 @@ class _AuthPageState extends State<AuthPage> {
   void initState() {
     super.initState();
     _loadLockoutState();
+    _lockTimer = Timer.periodic(const Duration(seconds: 10), (_) {
+      if (mounted && _isLockedOut) setState(_checkLockout);
+    });
+  }
+
+  /// REQ013: cooldown message shown while sign-in is locked.
+  String get _lockMessage {
+    final until = _lockUntil;
+    if (until == null) return 'Too many failed attempts. Please try again later.';
+    final h = until.hour % 12 == 0 ? 12 : until.hour % 12;
+    final m = until.minute.toString().padLeft(2, '0');
+    return 'Too many failed attempts. Try again at $h:$m ${until.hour < 12 ? 'AM' : 'PM'}.';
   }
 
   Future<void> _loadLockoutState() async {
@@ -189,7 +209,7 @@ class _AuthPageState extends State<AuthPage> {
       }
     } catch (e) {
       if (!mounted) return;
-      _showError('An unexpected error occurred.');
+      _showError(isNetworkError(e) ? kNoInternetMessage : 'An unexpected error occurred.');
     } finally {
       if (mounted) setState(() => _isLoading = false);
     }
@@ -232,22 +252,25 @@ class _AuthPageState extends State<AuthPage> {
         (route) => false,
       );
     } on AuthException catch (e) {
-      // Increment failed attempts
-      _failedAttempts++;
-      _saveLockoutState();
-
-      // Check if locked out after 5 failures
-      if (_failedAttempts >= 5) {
-        _isLockedOut = true;
-        _lockUntil = DateTime.now().add(const Duration(minutes: 15));
+      // No internet is not a wrong password: don't count it toward the lockout
+      if (!isNetworkError(e.message)) {
+        // Increment failed attempts
+        _failedAttempts++;
         _saveLockoutState();
+
+        // Check if locked out after 5 failures
+        if (_failedAttempts >= 5) {
+          _isLockedOut = true;
+          _lockUntil = DateTime.now().add(const Duration(minutes: 15));
+          _saveLockoutState();
+        }
       }
 
       if (!mounted) return;
       _showError(_authErrorMessage(e.message));
     } catch (e) {
       if (!mounted) return;
-      _showError('An unexpected error occurred.');
+      _showError(isNetworkError(e) ? kNoInternetMessage : 'An unexpected error occurred.');
     } finally {
       if (mounted) setState(() => _isLoading = false);
     }
@@ -291,22 +314,25 @@ class _AuthPageState extends State<AuthPage> {
         ),
       );
     } on AuthException catch (e) {
-      // Increment failed attempts
-      _failedAttempts++;
-      _saveLockoutState();
-
-      // Check if locked out after 5 failures
-      if (_failedAttempts >= 5) {
-        _isLockedOut = true;
-        _lockUntil = DateTime.now().add(const Duration(minutes: 15));
+      // No internet is not a failed attempt: don't count it toward the lockout
+      if (!isNetworkError(e.message)) {
+        // Increment failed attempts
+        _failedAttempts++;
         _saveLockoutState();
+
+        // Check if locked out after 5 failures
+        if (_failedAttempts >= 5) {
+          _isLockedOut = true;
+          _lockUntil = DateTime.now().add(const Duration(minutes: 15));
+          _saveLockoutState();
+        }
       }
 
       if (!mounted) return;
-      _showError('An error occurred.');
+      _showError(isNetworkError(e.message) ? kNoInternetMessage : 'An error occurred.');
     } catch (e) {
       if (!mounted) return;
-      _showError('An unexpected error occurred.');
+      _showError(isNetworkError(e) ? kNoInternetMessage : 'An unexpected error occurred.');
     } finally {
       if (mounted) setState(() => _isLoading = false);
     }
@@ -342,10 +368,10 @@ class _AuthPageState extends State<AuthPage> {
       );
     } on AuthException catch (e) {
       if (!mounted) return;
-      _showError('An error occurred.');
-    } catch (_) {
+      _showError(isNetworkError(e.message) ? kNoInternetMessage : 'An error occurred.');
+    } catch (e) {
       if (!mounted) return;
-      _showError('An error occurred.');
+      _showError(isNetworkError(e) ? kNoInternetMessage : 'An error occurred.');
     } finally {
       if (mounted) setState(() => _isLoading = false);
     }
@@ -710,6 +736,19 @@ Future<void> _openPrivacy() async {
 
             const SizedBox(height: 12),
 
+            if (!_isSignUp && _isLockedOut)
+              Padding(
+                padding: const EdgeInsets.only(bottom: 8),
+                child: Text(
+                  _lockMessage,
+                  textAlign: TextAlign.center,
+                  style: const TextStyle(
+                      color: Color(0xFFC0392B),
+                      fontSize: 13,
+                      fontWeight: FontWeight.w600),
+                ),
+              ),
+
             // Alternative sign-in options - show based on action
             if (!_isSignUp) ...[
               if (_action == AuthAction.signInWithPassword)
@@ -781,6 +820,8 @@ Future<void> _openPrivacy() async {
   Widget build(BuildContext context) {
     return Scaffold(
       body: Container(
+        // fill the whole screen, so no flat strip shows under the card
+        constraints: const BoxConstraints.expand(),
         decoration: const BoxDecoration(
           gradient: LinearGradient(
             colors: [Color(0xFFF7FFFD), Color(0xFFE6F8F4), Color(0xFFFFF4E8)],
