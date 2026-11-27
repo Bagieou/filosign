@@ -398,7 +398,7 @@ class _LessonPlayerScreenState extends State<LessonPlayerScreen> {
                   mainAxisSize: MainAxisSize.min,
                   children: [
                     _buildControlButton(
-                      icon: Icons.replay_10_rounded,
+                      icon: Icons.fast_rewind_rounded, // seeks 3 s (REQ023)
                       onPressed: _seekBackward,
                       tooltip: 'Rewind 3s',
                     ),
@@ -413,7 +413,7 @@ class _LessonPlayerScreenState extends State<LessonPlayerScreen> {
                     ),
                     const SizedBox(width: 16),
                     _buildControlButton(
-                      icon: Icons.forward_10_rounded,
+                      icon: Icons.fast_forward_rounded, // seeks 3 s (REQ023)
                       onPressed: _seekForward,
                       tooltip: 'Forward 3s',
                     ),
