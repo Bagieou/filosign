@@ -1,16 +1,6 @@
 import 'dart:math' as math;
 import 'dart:typed_data';
 
-/// FiloSign v4 canonical landmark space - 1:1 port of
-/// 2026-09-14-filosign-ai-v3-sprint/src/canonical.py.
-///
-///  1. Upright    - hands are rotated by sensorOrientation before this point;
-///                  pose arrives upright from the plugin.
-///  2. Isotropic  - letterbox into the unit square of the longer side
-///                  S = max(W, H):  X = (x-.5)*W/S+.5, Y = (y-.5)*H/S+.5, Z = z*W/S
-///  3. Chirality  - reflect (X -> 1-X, swap Pose L/R) when the signer's
-///                  dominant hand is the LEFT one (user setting).
-///  4. Slots      - slot0 = dominant hand, slot1 = other hand.
 const int kHandLm = 21;
 const int kPoseLm = 33;
 const int poseRWrist = 16, poseLWrist = 15;
@@ -30,18 +20,13 @@ final List<int> poseSwapIdx = () {
   return idx;
 }();
 
-/// What the app has for one camera frame, in the UPRIGHT image, normalized
-/// to that image (MediaPipe convention, before letterboxing).
 class RawFrameV4 {
   final int tMs;
-  /// Detected hands in detection order, each 21*3 (x, y, z).
   final List<List<double>> hands;
-  /// 33*4 (x, y, z, visibility) or null when no pose this frame.
   final List<double>? pose;
   const RawFrameV4({required this.tMs, required this.hands, this.pose});
 }
 
-/// One frame in canonical space.
 class CanonFrame {
   final double t; // seconds
   final Float32List hands; // 2 * 21 * 3, slot-major
@@ -56,7 +41,6 @@ class CanonFrame {
 
 double _f32(double v) => (Float32List(1)..[0] = v)[0];
 
-/// Letterbox one (x, y, z) triple; results rounded to float32 like numpy.
 List<double> _box(double x, double y, double z, double w, double h) {
   final s = math.max(w, h);
   return [
@@ -66,10 +50,6 @@ List<double> _box(double x, double y, double z, double w, double h) {
   ];
 }
 
-/// 'R'/'L' per detected hand (appearance in an un-mirrored camera). With pose:
-/// nearest Pose wrist; without: image x-order (the phone plugin gives no
-/// handedness labels) - person facing the camera shows the right hand on the
-/// image LEFT.
 List<String> appearanceSides(List<List<double>> hands, Float32List? pose) {
   final n = hands.length;
   if (n == 0) return const [];
@@ -88,12 +68,6 @@ List<String> appearanceSides(List<List<double>> hands, Float32List? pose) {
   return hands[0][0] <= hands[1][0] ? ['R', 'L'] : ['L', 'R'];
 }
 
-/// Hand identity across frames (port of canonical.tracked_sides): the phone's
-/// Pose is sparse, stale, and with the user close it often calls a right hand
-/// at the face the LEFT wrist (debug captures), so a nearest-wrist rule put
-/// the signing hand in the "other" slot. A hand keeps the side of the nearest
-/// hand in the previous frame; a new lone hand is the dominant one ('R'), two
-/// new hands go by image x-order.
 class HandSideTracker {
   static const double gapS = 0.4; // a hand missing longer is identified afresh
   static const double jump = 0.3; // wrist jump (letterboxed units) that breaks the track
@@ -135,8 +109,6 @@ class HandSideTracker {
   }
 }
 
-/// Canonicalize one frame. [width]/[height] = upright image size. With a
-/// [tracker] (the app), hands are identified by tracking instead of Pose.
 CanonFrame canonicalizeFrame(RawFrameV4 f, double width, double height, bool reflect,
     {HandSideTracker? tracker}) {
   final hands = <List<double>>[];
@@ -204,16 +176,11 @@ CanonFrame canonicalizeFrame(RawFrameV4 f, double width, double height, bool ref
   return CanonFrame(f.tMs / 1000.0, slots, present, outPose, outVis, poseOk);
 }
 
-// ---------------------------------------------------------------------------
-// temporal smoothing + resampling
-// ---------------------------------------------------------------------------
 double _alpha(double cutoff, double dt) {
   final tau = 1.0 / (2.0 * math.pi * cutoff);
   return 1.0 / (1.0 + tau / dt);
 }
 
-/// Causal One-Euro filter. x: n rows of D values, t seconds, valid per row.
-/// Restarts after any invalid row. Output rounded to float32 (numpy parity).
 List<Float64List> oneEuro(List<Float64List> x, List<double> t, List<bool> valid,
     {required double minCutoff, required double beta, required double dCutoff}) {
   final out = [for (final r in x) Float64List.fromList(r)];
@@ -251,9 +218,6 @@ List<Float64List> oneEuro(List<Float64List> x, List<double> t, List<bool> valid,
   return out;
 }
 
-/// Presence-aware resample of n rows to [length] rows (canonical.resample_presence).
-/// Interpolates only when both neighbours are present; otherwise copies the
-/// present neighbour. Returns (rows, present).
 (List<Float64List>, List<bool>) resamplePresence(
     List<Float64List> values, List<bool> present, int length) {
   final n = values.length;
@@ -268,7 +232,6 @@ List<Float64List> oneEuro(List<Float64List> x, List<double> t, List<bool> valid,
       b = 0;
       w = 0.0;
     } else {
-      // numpy.linspace: i * step, last point exactly n - 1
       final src = i == length - 1 ? (n - 1).toDouble() : i * ((n - 1) / (length - 1));
       a = src.floor();
       b = math.min(a + 1, n - 1);

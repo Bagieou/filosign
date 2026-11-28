@@ -6,13 +6,9 @@ import 'package:supabase_flutter/supabase_flutter.dart';
 
 import 'features/auth/auth_page.dart';
 
-/// App-wide navigator / messenger, so the inactivity logout can leave any
-/// screen and say why.
 final GlobalKey<NavigatorState> appNavigatorKey = GlobalKey<NavigatorState>();
 final GlobalKey<ScaffoldMessengerState> appMessengerKey = GlobalKey<ScaffoldMessengerState>();
 
-/// Accessibility preferences (REQ006): text size and high contrast, saved on
-/// the device and applied to every screen by [AppAccessibility].
 class AppSettings {
   static const textSizes = <String, double>{'Normal': 1.0, 'Large': 1.15, 'Extra large': 1.3};
   static final ValueNotifier<double> textScale = ValueNotifier(1.0);
@@ -41,9 +37,6 @@ class AppSettings {
   }
 }
 
-/// Applies [AppSettings] to everything below it: text scale, bold text and,
-/// for high contrast, a contrast boost over the whole screen (most screens use
-/// fixed brand colours, so a theme alone would not reach them).
 class AppAccessibility extends StatelessWidget {
   final Widget child;
   const AppAccessibility({super.key, required this.child});
@@ -80,8 +73,6 @@ class AppAccessibility extends StatelessWidget {
   }
 }
 
-/// REQ032: signs the user out after 15 minutes without a touch (or a hand in
-/// front of the camera, see [InactivityGuard.activity]).
 class InactivityGuard extends StatefulWidget {
   final Widget child;
   const InactivityGuard({super.key, required this.child});
@@ -89,13 +80,10 @@ class InactivityGuard extends StatefulWidget {
   static const Duration timeout = Duration(minutes: 15);
   static DateTime _last = DateTime.now();
 
-  /// Counts as activity (camera screens call this while hands are signing).
   static void activity() => _last = DateTime.now();
 
   static const _lastKey = 'last_activity_ms';
 
-  /// Saves the time of the last activity on the phone, so the app can tell
-  /// how long the user was away after it was closed.
   static Future<void> save() async {
     try {
       final p = await SharedPreferences.getInstance();
@@ -103,9 +91,6 @@ class InactivityGuard extends StatefulWidget {
     } catch (_) {}
   }
 
-  /// At app start: keeps the saved login if the last activity was less than
-  /// 15 minutes ago (true), otherwise signs it out (false).
-  /// Returns null when no one was signed in.
   static Future<bool?> resumeSavedLogin() async {
     final auth = Supabase.instance.client.auth;
     if (auth.currentSession == null) return null;
@@ -156,7 +141,6 @@ class _InactivityGuardState extends State<InactivityGuard> with WidgetsBindingOb
     if (state == AppLifecycleState.resumed) {
       _check();
     } else {
-      // leaving the app: remember when the user was last active
       InactivityGuard.save();
     }
   }

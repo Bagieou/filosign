@@ -13,7 +13,6 @@ void main() async {
     publishableKey: 'sb_publishable_heb483FEWgn1PZrXjfIQ7A_Rx9191Ir',
   );
   await AppSettings.load();
-  // stay signed in when the app is reopened within 15 minutes (REQ054)
   final resumed = await InactivityGuard.resumeSavedLogin();
   runApp(MainApp(signedIn: resumed == true));
   if (resumed == false) {
@@ -24,8 +23,7 @@ void main() async {
       ));
     });
   }
-  // warm up the sign models after the first screen is up, so the camera
-  // screens open without a loading pause
+  
   if (kLiveSignSupported) {
     Future.delayed(const Duration(seconds: 2), V4SignRecognizer.preload);
   }
@@ -50,7 +48,6 @@ class MainApp extends StatelessWidget {
         ),
         useMaterial3: true,
       ),
-      // text size / high contrast (REQ006) and the 15-minute logout (REQ032)
       builder: (context, child) =>
           InactivityGuard(child: AppAccessibility(child: child ?? const SizedBox())),
       home: signedIn ? const HomePage() : const AuthPage(),

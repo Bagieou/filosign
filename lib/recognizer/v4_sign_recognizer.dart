@@ -16,19 +16,10 @@ import 'v4/canonical_v4.dart';
 import 'v4/hold_detector.dart';
 import 'v4/features_v4.dart';
 
-/// FiloSign v4 recognizer (Dual-Layer). MediaPipe Hands + Pose -> canonical
-/// space (upright, isotropic, dominant hand = slot0) -> v4 features over a
-/// sliding time window -> average of 3 TFLite LSTMs of ONE head:
-///   letters head (alphabet category) or words head (every other category).
-/// Same lock rule as before: a class must dominate recent votes at >= 0.85.
 class V4SignRecognizer implements SignRecognizer {
   static const int seqLen = 30;
-  /// Debug builds (--dart-define=FILOSIGN_DEBUG_UI=true): log every decision.
   static const bool _log = bool.fromEnvironment('FILOSIGN_DEBUG_UI') || kTestBuild;
-  /// TEST builds: receives every finished attempt (raw landmarks + every
-  /// decision) so it can be saved on the phone and replayed offline.
   static void Function(Map<String, dynamic> attempt)? attemptSink;
-  /// Sign the screen asks for (lesson / quiz), saved with each attempt.
   String? expected;
   final List<String> _events = [];
   List<String> _candidates = const [];
@@ -61,67 +52,33 @@ class V4SignRecognizer implements SignRecognizer {
   }
   static const int _predictEveryN = 5;
   static const int _handsAwayMs = 700;
-  // iOS: the hand tracker returns fewer frames per second than on Android, so
-  // a short sign at the face (e.g. "deaf") often had < 12 hand frames and was
-  // dropped with no feedback. Replayed on held-out clips at 8 frames/s: 170 of
-  // 473 attempts were under 12 frames; judged from 6 frames they gave 156
-  // correct / 3 wrong / 9 not recognized (src: lowfps_check). Android unchanged.
   static final bool _ios = Platform.isIOS;
   static int get _awayMs => _ios ? 1000 : _handsAwayMs;
   static int get _minFinalFrames => _ios ? 6 : _minWindowFrames;
   int? _awaySinceMs;
   bool _awayFired = false;
   static const int _bufferMaxMs = 5000;
-  // Live window ~ the typical sign length in training (hand-visible span):
-  // letters median 2.7 s, words median 1.6 s (p75 2.2 s).
   static const double lettersWindowS = 2.5;
   static const double wordsWindowS = 1.8;
   static const int _minWindowFrames = 12;
   static const int _stableLockCount = 3;
   static const int _voteWindow = 5;
-  // confidence thresholds
-  // letters 85%
   static const double _stableLockMinConf = 0.85;
-  /// Word signs are judged ONCE, on the whole attempt, when the hands drop
-  /// (or after [_maxAttemptS] with the hands still up) - never mid-sign.
-  /// Replayed on held-out clips + 50 on-device attempts (src/tune_live_v4.py):
-  /// live lock 89.2% correct / 3.4% wrong (on-device 44%); whole attempt at
-  /// 70%: 91.5% / 0.8% (on-device 50%). Letters keep the live lock (91%).
   bool get _endOnly => !letters;
-  // words, hands lowered 70%
   static const double _endLockWords = 0.70;
   static const double _maxAttemptS = 4.5;
-  /// "Sign, then hold still" also ends a word sign: people taught by the old
-  /// live lock hold the sign instead of lowering the hands (teammate captures,
-  /// 2026-10-21: hands still up at the end of all 13). The signing (higher)
-  /// hand holding < 0.6 hand-sizes/s for 1.0 s (signing: median 1.7), after
-  /// moving > 1.5, >= 1 s into the attempt, judges the whole attempt at 85%;
-  /// a miss there is silent. 1.0 s, not 0.5: a short pause mid-sign (e.g. the
-  /// "5" handshape on the way to "9") was judged as a finished sign.
-  /// Replayed (src/hold_sim_v4.py, HOLD_S): 0.5 s 91.3% correct / 1.7% wrong,
-  /// 1.0 s 91.5% / 0.8% = same as judging only when the hands drop.
-  // words, hold still 85%
   static const double _holdLock = 0.85;
   final HoldDetector _hold = HoldDetector();
   static const double _minMargin = 0.25;
-  /// Minimum probability the best sign must have among ALL signs (before the
-  /// category filter). Random movements spread probability thin.
-  // min raw score
   static const double _minRawConf = 0.2;
-  /// Reject ("not a sign") class name in the label files.
   static const String noneLabel = '__none__';
-  /// True when the latest prediction was rejected (show "Not recognized").
   bool notRecognized = false;
 
   final bool letters;
   final List<Interpreter> _interpreters = [];
   final List<IsolateInterpreter> _isoInterpreters = [];
-  /// Words only: models trained without body dropout (location-aware).
   final List<IsolateInterpreter> _bodyIso = [];
-  /// Which word models judged the latest attempt (for the log).
   String _lastSet = '';
-  /// Shared: the cached models must never run twice at once (IsolateInterpreter
-  /// silently skips a run while busy), even across two overlapping screens.
   static bool _predicting = false;
   List<String> _labels = const [];
   bool _ready = false;
@@ -144,10 +101,7 @@ class V4SignRecognizer implements SignRecognizer {
   List<MapEntry<String, double>> _top3 = const [];
   int lastLatencyMs = 0;
   List<bool> lastPresent = const [false, false];
-  /// Shoulders visible in the latest frame (body location features available).
   bool lastPoseOk = false;
-  /// Copy of the previous attempt, kept when the buffer is cleared (e.g. the
-  /// hands leave the frame to tap the debug button).
   List<RawFrameV4> _lastAttemptRaw = const [];
 
   V4SignRecognizer({required this.letters});
@@ -159,10 +113,6 @@ class V4SignRecognizer implements SignRecognizer {
   @override
   bool get isReady => _ready;
 
-  /// [imageWidth]/[imageHeight] are the CameraImage size (sensor orientation).
-  /// [mirrored]: frames come mirrored like a selfie (iOS front camera); the
-  /// landmarks are flipped back so the model sees the real-world view it was
-  /// trained on (Android delivers un-mirrored sensor frames).
   void configureCamera({
     required int sensorOrientation,
     int? imageWidth,
@@ -180,8 +130,6 @@ class V4SignRecognizer implements SignRecognizer {
 
   bool get hasImageSize => _imgW > 0;
 
-  /// Models stay loaded for the whole app session (per head), so opening a
-  /// camera screen doesn't reload 3 models + background isolates every time.
   static final Map<String, Future<_HeadModels>> _cache = {};
 
   static Future<_HeadModels> _models(String head) =>
@@ -197,8 +145,6 @@ class V4SignRecognizer implements SignRecognizer {
       interps.add(interp);
       iso.add(await IsolateInterpreter.create(address: interp.address));
     }
-    // Words: a second set trained WITHOUT body dropout (2026-10-14), used
-    // when the body is visible - see [_infer].
     final bodyInterps = <Interpreter>[], bodyIso = <IsolateInterpreter>[];
     if (head == 'words') {
       for (final s in [101, 202, 303]) {
@@ -212,7 +158,6 @@ class V4SignRecognizer implements SignRecognizer {
     return _HeadModels(interps, iso, labels, bodyInterps, bodyIso);
   }
 
-  /// Load both heads in the background (e.g. after the app starts).
   static Future<void> preload() async {
     try {
       await _models('words');
@@ -230,8 +175,6 @@ class V4SignRecognizer implements SignRecognizer {
     _ready = true;
   }
 
-  /// Rotate a sensor-oriented normalized point to the upright image
-  /// (and un-mirror it when the camera delivers mirrored frames).
   (double, double) _rotateXY(double x, double y) {
     final (rx, ry) = switch (_sensorOrientation) {
       90 => (1.0 - y, x),
@@ -242,7 +185,6 @@ class V4SignRecognizer implements SignRecognizer {
     return _mirrored ? (1.0 - rx, ry) : (rx, ry);
   }
 
-  /// MediaPipe left/right pose landmark pairs (nose 0 has no pair).
   static const List<int> _poseMirror = [
     0, 4, 5, 6, 1, 2, 3, 8, 7, 10, 9, 12, 11, 14, 13, 16, 15, 18, 17, 20, 19,
     22, 21, 24, 23, 26, 25, 28, 27, 30, 29, 32, 31,
@@ -254,20 +196,15 @@ class V4SignRecognizer implements SignRecognizer {
     _candidates = candidates;
     if (hands.isEmpty) {
       _hold.handsLost();
-      // "hands dropped" = no hand for 0.7 s (time, not a frame count: a
-      // tracking dropout mid-sign lasted up to 0.47 s, almost the old 10 frames)
       final now = _clock.elapsedMilliseconds;
       _awaySinceMs ??= now;
       if (!_awayFired && now - _awaySinceMs! >= _awayMs) {
         _awayFired = true;
-        // hands dropped: judge the whole attempt once, the way training saw
-        // signs (live windows often hold only part of a sign)
         if (_buffer.length >= _minFinalFrames) {
           _finalDecision(List.of(_buffer), List.of(candidates), _attempt,
               List.of(_rawBuffer), List.of(_events));
         } else {
           _emitAttempt(_rawBuffer, _events, 'too_short');
-          // iOS: always answer an attempt the user made (no silent drop)
           if (_ios && _buffer.length >= 3) notRecognized = true;
         }
         _clearAttempt();
@@ -289,8 +226,6 @@ class V4SignRecognizer implements SignRecognizer {
           ]
     ];
     if (rawHands.isEmpty) return _last;
-    // Pose comes upright from the plugin. On a mirrored frame its "left"
-    // points are the person's right ones: flip x back and swap the pairs.
     final rawPose = pose.length >= kPoseLm
         ? [
             for (var j = 0; j < kPoseLm; j++)
@@ -313,8 +248,6 @@ class V4SignRecognizer implements SignRecognizer {
     }
 
     if (_endOnly && frame.t - _buffer.first.t >= _maxAttemptS) {
-      // hands kept up: judge what was signed, then start a new attempt
-      // (iOS: show "Not recognized" on a miss even though the hands are up)
       _finalDecision(List.of(_buffer), List.of(candidates), _attempt,
           List.of(_rawBuffer), List.of(_events), null, _ios);
       _clearAttempt();
@@ -330,9 +263,6 @@ class V4SignRecognizer implements SignRecognizer {
     return _last;
   }
 
-  /// Hold-still trigger for word signs (see [_holdLock]). Speed of the higher
-  /// hand's centre in hand sizes (wrist -> middle knuckle) per second, in
-  /// isotropic image units - same as src/hold_sim_v4.py.
   void _checkHold(List<List<double>> hands, double t, List<String> candidates) {
     final s = math.max(_imgW, _imgH);
     var h = hands.first;
@@ -345,16 +275,8 @@ class V4SignRecognizer implements SignRecognizer {
         _holdLock);
   }
 
-  /// Cascade, off the UI thread (background isolate + IsolateInterpreter):
-  /// while signing only model 1 of 3 runs; when its votes would lock, models
-  /// 2 and 3 judge the same window and the lock needs 2 of 3 to agree at 85%.
-  /// Simulated on held-out clips (src/compare_ensemble_v4.py): words 89.2%
-  /// correct / 3.0% wrong with 40% of the model runs of always-3 (88.6% /
-  /// 4.2%); one model alone locked 6-8.5% wrong. One prediction at a time.
   Future<void> _predictAndVote(List<String> candidates, double now) async {
     if (_predicting) return;
-    // Word signs: no mid-sign decision; the TEST build still runs model 1
-    // for the Top-3 panel and the attempt log.
     if (_endOnly && !_log) return;
     final window = [for (final f in _buffer) if (f.t >= now - windowS) f];
     if (window.length < _minWindowFrames) return;
@@ -381,13 +303,11 @@ class V4SignRecognizer implements SignRecognizer {
     }
   }
 
-  /// Model input for one window of frames (features computed in an isolate).
   Future<List<List<List<double>>>?> _input(List<CanonFrame> window) {
     final isLetters = letters;
     return Isolate.run(() => _featureInput(window, isLetters));
   }
 
-  /// Averaged probabilities + each model's own, for the models in [which].
   Future<(List<double>, List<List<double>>)?> _run(
       List<List<List<double>>> input, List<int> which, {bool body = false}) async {
     final set = body ? _bodyIso : _isoInterpreters;
@@ -412,44 +332,21 @@ class V4SignRecognizer implements SignRecognizer {
     return probs;
   }
 
-  /// All 3 models on a whole attempt (the end-of-sign decision).
-  /// Word signs with the body (face + shoulders) in view on at least half the
-  /// frames use the models trained WITHOUT body dropout: the dropout models
-  /// (needed when the body is out of view) mostly ignore WHERE the hand is -
-  /// a teammate's grandmother (chin) read as grandfather (forehead) at 98%.
-  /// Replayed (src/compare_sets_v4.py): hand moved chin <-> forehead,
-  /// right answer 6% -> 56%; held-out with body 91.1% / 1.9% wrong, without
-  /// body unchanged (90.9% / 1.7%); teammate captures 0/20 -> 3/20.
-  /// Numbers and months always use the dropout models: there the motion / full sequence
-  /// matters, not location, and the location-aware set read "nine" (5 shape
-  /// then a motion) as "five": on-device attempts 2/14 vs 14/14 (eight 2/5 vs
-  /// 5/5); held-out numbers 90% vs 92%. Every other category is unchanged.
   Future<(List<double>, List<List<double>>)?> _infer(List<CanonFrame> window) async {
-    // iOS: the body is still tracked and shown, but word signs are judged
-    // without it. The iOS pose plugin squeezes the whole frame into 256x256
-    // without finding the person first, so face points are off and signs made
-    // at the face (deaf, blind, deaf blind) failed. Test clips with no body:
-    // 430/473 correct (deaf 4/4, blind 3/4, deaf blind 3/4).
     if (_ios && !letters) window = [for (final f in window) _withoutBody(f)];
     final input = await _input(window);
     if (input == null) return null;
     final withBody = window.where((f) => f.poseOk).length >= 0.5 * window.length;
     final numbers = _candidates.contains('nine') && _candidates.contains('five');
-    // Months too: they differ by handshape / motion near the face, not by
-    // forehead-vs-chin; held-out months with the regular models 75.2%
-    // correct / 1.0% wrong vs 74.3% / 5.0% (april 5/9 vs 4/9, august 7/8 vs
-    // 6/8, no april<->august wrong locks) - src/months_check_v4.py.
     final months = _candidates.contains('april') && _candidates.contains('august');
     final body = _bodyIso.length == 3 && withBody && !numbers && !months;
     _lastSet = body ? 'body' : 'dropout';
     return _run(input, const [0, 1, 2], body: body);
   }
 
-  /// Same frame with no face or shoulder points (as when the body is out of view).
   static CanonFrame _withoutBody(CanonFrame f) => CanonFrame(
       f.t, f.hands, f.present, Float32List(kPoseLm * 3), Float32List(kPoseLm), false);
 
-  /// The 3-model check behind a live lock: same rule as the end of a sign.
   void _confirmLock(int cls, List<List<double>> perModel, List<String> candidates) {
     final probs = _mean(perModel);
     final noneIdx = _labels.indexOf(noneLabel);
@@ -472,10 +369,6 @@ class V4SignRecognizer implements SignRecognizer {
     }
   }
 
-  /// End of an attempt (hands left the frame) without a live lock: classify
-  /// every frame since the hands appeared, like a whole training clip, with
-  /// all 3 models and the same rule as a live lock ([_judge] + 85%).
-  /// Simulated on held-out clips: words 40% -> 87% correct, wrong ~3%.
   Future<void> _finalDecision(List<CanonFrame> frames, List<String> candidates, int attempt,
       [List<RawFrameV4> raw = const [], List<String> events = const [], double? lock,
       bool feedback = false]) async {
@@ -499,15 +392,12 @@ class V4SignRecognizer implements SignRecognizer {
       if (out == null || _locked || !_ready || attempt != _attempt) return;
       final (probs, perModel) = out;
       final noneIdx = _labels.indexOf(noneLabel);
-      // compare only signs in current category
       final allowed = _allowed(candidates, noneIdx);
       final sum = allowed.fold<double>(0.0, (a, i) => a + probs[i]);
       if (sum <= 0) return;
       final j = _judge(probs, perModel, allowed, noneIdx);
       final idx = j.sign;
-      // confidence within category
       final conf = probs[idx] / sum;
-      // final check
       final ok = j.ok && conf >= (lock ?? (_endOnly ? _endLockWords : _stableLockMinConf));
       if (_log) {
         final line = 'FILOSIGN_FINAL ${_labels[idx]} ${(conf * 100).round()}% '
@@ -517,8 +407,6 @@ class V4SignRecognizer implements SignRecognizer {
         events.add('${_clock.elapsedMilliseconds} $line');
       }
       setResult(ok ? 'final_lock:${_labels[idx]}' : 'final_rejected:${_labels[idx]}');
-      // A new attempt already started (hands back up, or kept up past
-      // _maxAttemptS): a match still counts, a miss is not shown over it.
       if (_buffer.isNotEmpty && !ok && !feedback) return;
       if (ok) {
         _locked = true;
@@ -532,14 +420,6 @@ class V4SignRecognizer implements SignRecognizer {
     }
   }
 
-  /// Is this a sign, and which? Only this screen's signs are compared: a sign
-  /// can look like a sign from ANOTHER category (that probability is ignored
-  /// - on device "deaf" was 97% within Basics but only 32% over all signs).
-  /// Rejected when the model says "not a sign" more than the best sign, the
-  /// best sign is weak over all signs, or fewer than 2 of the 3 models pick it
-  /// (one model often mixed up look-alikes such as deaf / deaf_blind live).
-  /// Together with the 85% lock confidence, on held-out clips: words 90%
-  /// correct / 0.6% wrong, fake signs 92% rejected (same as all-3-agree).
   ({int sign, bool ok, String models}) _judge(
       List<double> probs, List<List<double>> perModel, Set<int> allowed, int noneIdx) {
     final signs = [for (final i in allowed) if (i != noneIdx) i];
@@ -547,9 +427,7 @@ class V4SignRecognizer implements SignRecognizer {
     int best(List<double> p) => signs.reduce((a, b) => p[b] > p[a] ? b : a);
     final idx = best(probs);
     final picks = [for (final p in perModel) best(p)];
-    // not-a-sign score
     final noneP = noneIdx >= 0 ? probs[noneIdx] : 0.0;
-    // not-a-sign must be lower + 2 of 3 models agree
     final ok = noneP < probs[idx] &&
         probs[idx] >= _minRawConf &&
         picks.where((i) => i == idx).length >= math.min(2, picks.length);
@@ -567,18 +445,12 @@ class V4SignRecognizer implements SignRecognizer {
     return allowed;
   }
 
-  /// Not a sign: the model's reject class, a weak raw score, or the three
-  /// models disagreeing. Clears pending votes, so a half-done or random
-  /// movement can never add up to a lock. "Not recognized" itself is only
-  /// shown by [_finalDecision]: mid-sign windows often look like a partial sign.
   void _reject(double conf) {
     _last = SignPrediction(sign: null, confidence: conf);
     _voteClass.clear();
     _voteConf.clear();
   }
 
-  /// Live vote on one window. Returns the sign whose votes would lock (to be
-  /// confirmed by all 3 models), or null.
   int? _vote(List<double> probs, List<List<double>> perModel, List<String> candidates) {
     final noneIdx = _labels.indexOf(noneLabel);
     final allowed = _allowed(candidates, noneIdx);
@@ -618,7 +490,6 @@ class V4SignRecognizer implements SignRecognizer {
       _voteClass.removeAt(0);
       _voteConf.removeAt(0);
     }
-    // only lock once the buffer covers most of a sign
     if (_buffer.last.t - _buffer.first.t < 0.8 * windowS) return null;
     final counts = <int, int>{}, sums = <int, double>{};
     for (var i = 0; i < _voteClass.length; i++) {
@@ -639,9 +510,6 @@ class V4SignRecognizer implements SignRecognizer {
     return null;
   }
 
-  /// Debug capture: the last few seconds exactly as the recognizer saw them
-  /// (upright landmarks before canonicalization), plus camera settings and
-  /// the current guesses. Replayed offline by src/replay_debug_v4.py.
   Map<String, dynamic> debugSnapshot({String? expected, List<String>? candidates}) => {
         'version': 1,
         'head': headName,
@@ -694,7 +562,6 @@ class V4SignRecognizer implements SignRecognizer {
       _emitAttempt(List.of(_rawBuffer), List.of(_events),
           _locked ? 'live_lock:${_last.sign}' : 'closed');
     }
-    // the models are shared and cached (see [_cache]); just stop using them
     _ready = false;
     _attempt++;
     _isoInterpreters.clear();
@@ -713,7 +580,6 @@ class _HeadModels {
       [this.bodyInterpreters = const [], this.bodyIsolates = const []]);
 }
 
-/// Runs in a background isolate: canonical frames -> model input [1][30][F].
 List<List<List<double>>>? _featureInput(List<CanonFrame> window, bool letters) {
   final feats = featuresV4(window, letters, length: V4SignRecognizer.seqLen);
   if (feats == null) return null;

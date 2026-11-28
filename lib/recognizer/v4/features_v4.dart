@@ -3,13 +3,6 @@ import 'dart:typed_data';
 
 import 'canonical_v4.dart';
 
-/// FiloSign v4 features - 1:1 port of
-/// 2026-09-14-filosign-ai-v3-sprint/src/features_v4.py.
-///
-/// window (frames with >= 1 hand) -> One-Euro smoothing -> presence-aware
-/// resample to L frames -> per-frame features.
-///   letters head: 116 / frame (dominant hand only, no pose)
-///   words head:   304 / frame (both hands + pose location + two-hand contact)
 const int letterDim = 116;
 const int wordDim = 304;
 const double _eps = 1e-6;
@@ -21,7 +14,6 @@ const List<List<int>> _chains = [
   [0, 13, 14, 15, 16], [0, 17, 18, 19, 20],
 ];
 const List<List<int>> _fingerDirs = [[2, 4], [5, 8], [9, 12], [13, 16], [17, 20]];
-// Pose subset (column order matters): nose, shoulders, elbows, eyes, ears, mouth.
 const List<int> posePoints = [0, 11, 12, 13, 14, 2, 5, 7, 8, 9, 10];
 const int _pNose = 0, _pLS = 1, _pRS = 2, _pLE = 3, _pRE = 4, _pLEye = 5,
     _pREye = 6, _pLEar = 7, _pREar = 8, _pML = 9, _pMR = 10;
@@ -31,7 +23,6 @@ class OneEuroParams {
   const OneEuroParams({this.minCutoff = 3.0, this.beta = 1.0, this.dCutoff = 1.0});
 }
 
-// ---- small vector helpers (3D, as List<double>) ----------------------------
 typedef V3 = List<double>;
 V3 _sub(V3 a, V3 b) => [a[0] - b[0], a[1] - b[1], a[2] - b[2]];
 double _dot(V3 a, V3 b) => a[0] * b[0] + a[1] * b[1] + a[2] * b[2];
